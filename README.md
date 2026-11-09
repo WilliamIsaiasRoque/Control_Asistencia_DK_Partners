@@ -40,25 +40,20 @@ La clave incluida en `.env` es pública y está restringida por RLS. No agregues
 
 ## Google Sheets
 
-La app sincroniza hacia el formato semanal existente de Google Sheets. Supabase sigue siendo la fuente oficial; los datos del Sheet son una copia de consulta. La hoja compartida es: https://docs.google.com/spreadsheets/d/1qtxU2ZZEraO4h07jq0SD3mXlUhCMcltmuIhxw7sOetE/edit
+La sincronización utiliza **Google Apps Script Web App** para no depender de una cuenta de facturación de Google Cloud. Supabase sigue siendo la fuente oficial; la hoja es una copia de consulta. La app escribe en el formato semanal existente: https://docs.google.com/spreadsheets/d/1qtxU2ZZEraO4h07jq0SD3mXlUhCMcltmuIhxw7sOetE/edit
 
-Cada pestaña mensual debe conservar este diseño:
+La hoja debe conservar sus pestañas mensuales (`NOVIEMBRE`, `DICIEMBRE`, etc.), los nombres de trabajadores en la fila 1 y `Día`, `Fecha` e `Ingreso`/`Salida`/`Horas` en la fila 2. Las fechas deben ser valores de fecha reales. El script solo modifica Ingreso y Salida; las fórmulas existentes calculan Horas y totales. El formato de hora es `h:mm AM/PM`. La pestaña oculta `_SYNC_IDS` guarda el UUID de Supabase para reintentar sin duplicados.
 
-- Fila 1: nombre del trabajador sobre su bloque de columnas.
-- Fila 2: `Día`, `Fecha` y, para cada trabajador, `Ingreso`, `Salida`, `Horas`.
-- Filas siguientes: una fila por fecha. La app solo actualiza Ingreso y Salida; las fórmulas existentes calculan Horas y totales.
-- Formato horario de las columnas Ingreso/Salida: `h:mm AM/PM`. En las pestañas actuales, las columnas son D:E para William, H:I para Rommel y L:M para Shantal. Se corrigió el formato de la marca de 14:15 para mostrar 2:15 PM.
-- La pestaña oculta `_SYNC_IDS` guarda el UUID de Supabase y la ubicación de la fila, para reintentar sin duplicar.
+### Configuración
 
-Para habilitar el flujo automático, todavía hay que completar la configuración en Supabase y Google Cloud:
+1. Abre el Sheet con la cuenta admin, ve a **Extensiones → Apps Script** y pega `google-apps-script/Code.gs` en `Code.gs`.
+2. En **Project Settings → Script Properties**, añade `SPREADSHEET_ID` (el ID entre `/d/` y `/edit`) y `WEBHOOK_SECRET` (una cadena aleatoria larga).
+3. En **Deploy → New deployment → Web app**, selecciona **Execute as me** y el acceso **Anyone**. La URL `/exec` es el webhook; el secreto del paso anterior protege la escritura. El script corre con acceso a la hoja de la cuenta admin.
+4. Guarda estos secretos en **Supabase → Edge Functions → Secrets**: `APPS_SCRIPT_WEBHOOK_URL` (URL `/exec`), `APPS_SCRIPT_WEBHOOK_SECRET` (el mismo `WEBHOOK_SECRET`) y `SYNC_CRON_SECRET` (otro secreto aleatorio). No pongas secretos en el frontend, en la hoja ni en Git.
+5. Desde PowerShell, en el repo, ejecuta `supabase login`, `supabase link --project-ref evnfjzomveojmxbvyeav` y `supabase functions deploy sync-google-sheets`. Habilita `pg_cron`, `pg_net` y Vault. En `supabase/setup_cron.sql`, reemplaza el URL de ejemplo con `https://evnfjzomveojmxbvyeav.supabase.co/functions/v1/sync-google-sheets` y el marcador del secreto con `SYNC_CRON_SECRET`; ejecuta el SQL una vez.
+6. Registra una entrada de prueba. El cron la procesa dentro de cinco minutos. En el panel admin revisa el estado; ante errores, `sync_log` guarda el mensaje y los intentos, y reintenta automáticamente. El botón **Re-sincronizar con Google Sheets** permite volver a poner un rango en cola.
 
-1. En Google Cloud habilita **Google Sheets API** y crea una Service Account.
-2. Comparte la hoja con el correo de la Service Account como **Editor**. Comparte con cada persona de la empresa como **Lector**; el enlace por sí solo no da acceso a un documento restringido.
-3. Configura en Supabase los secretos `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` y `SYNC_CRON_SECRET`. La llave privada y el secreto de cron nunca van al frontend ni al repositorio.
-4. Despliega la función `sync-google-sheets` después de publicar estos cambios. Habilita `pg_cron`, `pg_net` y Vault; configura `supabase/setup_cron.sql` con la URL desplegada y el mismo secreto de cron.
-5. El cron revisa cada cinco minutos la cola `sync_log`. Las marcas se guardan primero en Supabase aunque Google falle. Los errores quedan registrados con estado, texto y número de intentos; al corregir la configuración, el botón de re-sincronización vuelve a poner el rango en cola.
-
-La hoja debe tener pestañas nombradas con el mes en español (`NOVIEMBRE`, `DICIEMBRE`, etc.), las fechas como valores de fecha reales y los nombres de perfil que correspondan a los encabezados de fila 1. La función no crea filas ni modifica las fórmulas de horas.
+El Sheet debe compartirse con los trabajadores como **Lector**. La cuenta de Apps Script admin no necesita compartir una credencial con Google Cloud ni crear una Service Account. Apps Script tiene cuotas diarias gratuitas, suficientes para este equipo; Google puede cambiarlas.
 ## QR y reglas de marcas
 
 - Al recargar el panel admin, la app vuelve a consultar y muestra la sesión activa hasta su vencimiento; recargar no invalida el QR ni la clave.
