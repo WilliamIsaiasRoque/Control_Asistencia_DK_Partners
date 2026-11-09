@@ -65,6 +65,18 @@ function App() {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordSetup, setPasswordSetup] = useState(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1))
+    return params.get('type') === 'invite' || params.get('type') === 'recovery'
+  })
+  const [authLinkError] = useState(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1))
+    if (params.get('error_code') === 'otp_expired') return 'La invitación venció. Pídele al administrador que te envíe una nueva.'
+    if (params.get('error')) return 'El enlace de acceso no es válido o ya venció. Pídele al administrador que te envíe uno nuevo.'
+    return ''
+  })
   const [busy, setBusy] = useState(false)
   const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([])
   const [history, setHistory] = useState<AttendanceRecord[]>([])
@@ -178,6 +190,31 @@ function App() {
     setBusy(false)
   }
 
+  async function savePassword(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase) return
+    if (newPassword.length < 8) {
+      setNotice({ tone: 'error', text: 'La contraseña debe tener al menos 8 caracteres.' })
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setNotice({ tone: 'error', text: 'Las contraseñas no coinciden.' })
+      return
+    }
+    setBusy(true)
+    setNotice(null)
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) setNotice({ tone: 'error', text: 'No se pudo guardar la contraseña. Solicita una nueva invitación.' })
+    else {
+      setPasswordSetup(false)
+      setNewPassword('')
+      setConfirmPassword('')
+      window.history.replaceState({}, '', window.location.pathname)
+      setNotice({ tone: 'success', text: 'Contraseña configurada. Ya puedes ingresar a tu cuenta.' })
+    }
+    setBusy(false)
+  }
+
   async function signOut() {
     if (!supabase) return
     await supabase.auth.signOut()
@@ -219,6 +256,23 @@ function App() {
 
   if (!isSupabaseConfigured) return <SetupNotice />
 
+  if (session && passwordSetup) return (
+    <main className="setup-page">
+      <section className="setup-card password-setup-card">
+        <div className="brand-mark">DK</div>
+        <span className="eyebrow">ACTIVA TU CUENTA</span>
+        <h1>Define tu contraseña</h1>
+        <p>Elige una contraseña para ingresar al control de asistencia.</p>
+        <form onSubmit={savePassword} className="form-stack">
+          <label>Nueva contraseña<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>
+          <label>Confirma la contraseña<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>
+          {notice && <Notice notice={notice} />}
+          <button className="button button-primary button-wide" disabled={busy}>{busy ? 'Guardando…' : 'Guardar contraseña'}</button>
+        </form>
+      </section>
+    </main>
+  )
+
   if (!session) return (
     <main className="login-shell">
       <div className="login-visual">
@@ -237,6 +291,7 @@ function App() {
           <span className="eyebrow">PORTAL DEL EQUIPO</span>
           <h2>Bienvenido</h2>
           <p className="muted">Ingresa con el correo y contraseña de tu cuenta.</p>
+          {authLinkError && <div className="inline-notice notice-error"><span><X size={17} /></span><span>{authLinkError}</span></div>}
           {qrToken && <div className="inline-notice notice-info"><ShieldCheck size={17} /> QR leído. Inicia sesión para registrar tu marca.</div>}
           <form onSubmit={signIn} className="form-stack">
             <label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nombre@dkpartners.com" autoComplete="username" required /></label>
@@ -312,7 +367,7 @@ function Notice({ notice, dismiss }: { notice: Notice; dismiss?: () => void }) {
 }
 
 function SetupNotice() {
-  return <main className="setup-page"><div className="setup-card"><div className="brand-mark">DK</div><span className="eyebrow">PRIMERA CONFIGURACIÓN</span><h1>Conecta el proyecto</h1><p>La interfaz ya está lista. Para guardar marcas de forma segura, agrega las credenciales públicas de tu proyecto Supabase en el archivo local <code>.env</code>.</p><pre>VITE_SUPABASE_URL=https://…supabase.co<br />VITE_SUPABASE_ANON_KEY=…</pre><p className="small-muted">Las credenciales privadas de Google Sheets y Supabase nunca van en este archivo del navegador.</p></div></main>
+  return <main className="setup-page"><div className="setup-card"><div className="brand-mark">DK</div><span className="eyebrow">PRIMERA CONFIGURACIÓN</span><h1>Conecta el proyecto</h1><p>La interfaz ya está lista. Para guardar marcas de forma segura, agrega las credenciales públicas de tu proyecto Supabase en el archivo local <code>.env.local</code>.</p><pre>VITE_SUPABASE_URL=https://…supabase.co<br />VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_…</pre><p className="small-muted">Las credenciales privadas de Google Sheets y Supabase nunca van en este archivo del navegador.</p></div></main>
 }
 
 function AdminDashboard(props: {

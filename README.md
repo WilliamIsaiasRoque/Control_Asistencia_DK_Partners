@@ -24,6 +24,8 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
 
 5. Aplica la migración `supabase/migrations/202611070001_initial_schema.sql` antes de iniciar sesión.
 
+Para pruebas locales, Vite usa el puerto fijo `5174`. Configura **Authentication → URL Configuration** con `http://localhost:5174` como Site URL y agrega `http://localhost:5174/**` a Redirect URLs. Las invitaciones vencen; inicia `npm run dev` y reenvía la invitación para completar la configuración de contraseña en la app.
+
 La clave incluida en `.env` es pública y está restringida por RLS. No agregues claves privadas, JSON de Service Account ni secretos al frontend o a Git.
 
 ## Supabase
