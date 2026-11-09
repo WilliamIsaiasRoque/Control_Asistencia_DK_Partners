@@ -14,7 +14,9 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
 1. Instala Node.js LTS y Git.
 2. Copia `.env.example` como `.env` y pega la URL y la clave pública publishable del proyecto Supabase. Si el panel todavía muestra la clave legacy `anon`, también se acepta como `VITE_SUPABASE_ANON_KEY`.
 3. Desde la carpeta del repo ejecuta `npm install` y luego `npm run dev`.
-4. Crea las cuentas desde Supabase Auth. El trigger crea automáticamente un perfil `worker`; después cambia el rol del jefe a `admin` desde el SQL Editor:
+4. Aplica la migración `supabase/migrations/202611070001_initial_schema.sql`.
+5. Crea las cuentas desde **Authentication → Users → Add user → Create new user** (no uses **Invite user**, que intenta enviar un correo). Asigna una contraseña temporal y confirma el correo desde el panel. El trigger crea automáticamente el perfil `worker`; cada persona puede cambiar su contraseña después de iniciar sesión desde **Cambiar contraseña**. Si alguien la olvida, el administrador le asigna otra desde Supabase.
+6. Cambia el rol del jefe a `admin` desde el SQL Editor:
 
    ```sql
    update public.profiles
@@ -22,9 +24,7 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
    where id = (select id from auth.users where email = 'CORREO_DEL_JEFE');
    ```
 
-5. Aplica la migración `supabase/migrations/202611070001_initial_schema.sql` antes de iniciar sesión.
-
-Para pruebas locales, Vite usa el puerto fijo `5174`. Configura **Authentication → URL Configuration** con `http://localhost:5174` como Site URL y agrega `http://localhost:5174/**` a Redirect URLs. Las invitaciones vencen; inicia `npm run dev` y reenvía la invitación para completar la configuración de contraseña en la app.
+Para pruebas locales, Vite usa el puerto fijo `5174`. Configura **Authentication → URL Configuration** con `http://localhost:5174` como Site URL y agrega `http://localhost:5174/**` a Redirect URLs. Este flujo no necesita SMTP ni correos de invitación; el equipo entra con las contraseñas temporales creadas por el admin y puede cambiarlas dentro de la app.
 
 La clave incluida en `.env` es pública y está restringida por RLS. No agregues claves privadas, JSON de Service Account ni secretos al frontend o a Git.
 
@@ -32,7 +32,7 @@ La clave incluida en `.env` es pública y está restringida por RLS. No agregues
 
 1. Crea un proyecto Supabase. El plan gratuito tiene límites y puede pausar proyectos con poca actividad.
 2. Aplica la migración SQL.
-3. Crea las cuentas del jefe y los trabajadores desde **Authentication → Users**. Usa el correo de cada persona y define su nombre en `raw_user_meta_data.full_name` o actualiza `profiles.full_name`.
+3. Crea las cuentas del jefe y los trabajadores desde **Authentication → Users → Add user → Create new user** (no **Invite user**). Asigna contraseña temporal y confirma cada correo desde el panel. Define los nombres en `profiles.full_name`.
 4. Promueve solo la cuenta del jefe a `admin`; las cuentas nuevas quedan como `worker`.
 5. Configura URL de redirección de Auth para el dominio local y el dominio de Cloudflare Pages.
 

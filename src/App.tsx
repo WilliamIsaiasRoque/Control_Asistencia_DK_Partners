@@ -67,6 +67,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordChangeOpen, setPasswordChangeOpen] = useState(false)
   const [passwordSetup, setPasswordSetup] = useState(() => {
     const params = new URLSearchParams(window.location.hash.slice(1))
     return params.get('type') === 'invite' || params.get('type') === 'recovery'
@@ -208,13 +209,14 @@ function App() {
     setBusy(true)
     setNotice(null)
     const { error } = await supabase.auth.updateUser({ password: newPassword })
-    if (error) setNotice({ tone: 'error', text: 'No se pudo guardar la contraseña. Solicita una nueva invitación.' })
+    if (error) setNotice({ tone: 'error', text: 'No se pudo guardar la contraseña. Revisa tu sesión y vuelve a intentarlo.' })
     else {
       setPasswordSetup(false)
+      setPasswordChangeOpen(false)
       setNewPassword('')
       setConfirmPassword('')
       window.history.replaceState({}, '', window.location.pathname)
-      setNotice({ tone: 'success', text: 'Contraseña configurada. Ya puedes ingresar a tu cuenta.' })
+      setNotice({ tone: 'success', text: passwordChangeOpen ? 'Contraseña actualizada correctamente.' : 'Contraseña configurada. Ya puedes ingresar a tu cuenta.' })
     }
     setBusy(false)
   }
@@ -302,6 +304,7 @@ function App() {
             <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Tu contraseña" autoComplete="current-password" required /></label>
             {notice && <Notice notice={notice} />}
             <button className="button button-primary button-wide" disabled={busy}>{busy ? 'Ingresando…' : 'Ingresar'} <ArrowRight size={17} /></button>
+            <p className="auth-help-note">¿Olvidaste tu contraseña? Pídele al administrador que te asigne una temporal.</p>
           </form>
           <p className="login-footnote"><ShieldCheck size={15} /> Acceso privado para el equipo DK Partners</p>
         </div>
@@ -312,6 +315,24 @@ function App() {
 
   if (!profile) return <div className="screen-center"><span className="loader" /> Preparando tu cuenta…</div>
   if (!profile.is_active) return <main className="screen-center"><div className="empty-state"><ShieldCheck size={28} /><h2>Cuenta desactivada</h2><p>Contacta al administrador de DK Partners.</p><button className="button button-secondary" onClick={signOut}>Cerrar sesión</button></div></main>
+
+  if (passwordChangeOpen) return (
+    <main className="setup-page">
+      <section className="setup-card password-setup-card">
+        <div className="brand-mark">DK</div>
+        <span className="eyebrow">SEGURIDAD DE LA CUENTA</span>
+        <h1>Cambia tu contraseña</h1>
+        <p>Actualiza tu clave de acceso. No se enviará ningún correo.</p>
+        <form onSubmit={savePassword} className="form-stack">
+          <label>Nueva contraseña<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>
+          <label>Confirma la contraseña<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label>
+          {notice && <Notice notice={notice} />}
+          <button className="button button-primary button-wide" disabled={busy}>{busy ? 'Guardando…' : 'Guardar contraseña'}</button>
+          <button type="button" className="auth-help-button" onClick={() => { setPasswordChangeOpen(false); setNewPassword(''); setConfirmPassword(''); setNotice(null) }}>Volver a asistencia</button>
+        </form>
+      </section>
+    </main>
+  )
 
   const isAdmin = profile.role === 'admin'
   const ownRecord = todayRecords.find((record) => record.worker_id === profile.id)
@@ -328,7 +349,7 @@ function App() {
       <section className="main-column">
         <header className="topbar">
           <div className="breadcrumb"><span>Equipo</span><span className="crumb-slash">/</span><strong>Asistencia</strong></div>
-          <div className="topbar-user"><div className="avatar">{profile.full_name?.slice(0, 1).toUpperCase() || 'D'}</div><div className="user-copy"><strong>{profile.full_name}</strong><span>{isAdmin ? 'Administrador' : 'Trabajador'}</span></div><button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={signOut}><LogOut size={17} /></button></div>
+          <div className="topbar-user"><div className="avatar">{profile.full_name?.slice(0, 1).toUpperCase() || 'D'}</div><div className="user-copy"><strong>{profile.full_name}</strong><span>{isAdmin ? 'Administrador' : 'Trabajador'}</span></div><button className="text-button password-change-trigger" onClick={() => { setNotice(null); setPasswordChangeOpen(true) }}>Cambiar contraseña</button><button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={signOut}><LogOut size={17} /></button></div>
         </header>
         <div className="page-content">
           <div className="page-heading"><div><span className="eyebrow">{isAdmin ? 'PANEL DE CONTROL' : 'MI ASISTENCIA'}</span><h1>{isAdmin ? 'Hola, ' : 'Hola, '}{profile.full_name?.split(' ')[0]}<span className="heading-period">.</span></h1><p>{displayDate}</p></div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
