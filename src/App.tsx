@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
@@ -24,7 +24,7 @@ import {
   type SyncLog,
 } from './lib/supabase'
 
-type QrSession = { token: string; expires_at: string }
+type QrSession = { token: string; access_code: string; expires_at: string }
 type Notice = { tone: 'success' | 'error' | 'info'; text: string }
 
 const PERU_ZONE = 'America/Lima'
@@ -85,12 +85,23 @@ function App() {
   const [history, setHistory] = useState<AttendanceRecord[]>([])
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([])
   const [qrSession, setQrSession] = useState<QrSession | null>(null)
+  const [pendingQrToken, setPendingQrToken] = useState(() => new URLSearchParams(window.location.search).get('qr'))
+  const [pendingAttendanceCode, setPendingAttendanceCode] = useState<string | null>(null)
+  const [attendanceCodeInput, setAttendanceCodeInput] = useState('')
+  const [todayLoadedFor, setTodayLoadedFor] = useState<string | null>(null)
+  const [scanDialog, setScanDialog] = useState<'confirm' | 'success' | null>(null)
+  const [scanEvent, setScanEvent] = useState<'Ingreso' | 'Salida'>('Ingreso')
   const [resyncFrom, setResyncFrom] = useState(localDateKey())
   const [resyncTo, setResyncTo] = useState(localDateKey())
   const [lastMarked, setLastMarked] = useState<AttendanceRecord | null>(null)
   const [clock, setClock] = useState(new Date())
 
-  const qrToken = useMemo(() => new URLSearchParams(window.location.search).get('qr'), [])
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has('qr')) return
+    url.searchParams.delete('qr')
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [])
 
   const loadProfile = useCallback(async (userId: string) => {
     if (!supabase) return
@@ -130,6 +141,7 @@ function App() {
       if (recent.error) throw recent.error
       setTodayRecords(todayRecord.data ? [todayRecord.data as AttendanceRecord] : [])
       setHistory((recent.data ?? []) as AttendanceRecord[])
+      setTodayLoadedFor(currentProfile.id)
     }
   }, [])
 
@@ -165,30 +177,63 @@ function App() {
 
   useEffect(() => {
     if (!profile?.is_active) return
+    if (profile.role === 'worker') setTodayLoadedFor(null)
     loadData(profile).catch((error) => setNotice({ tone: 'error', text: error.message }))
   }, [profile, loadData])
 
   useEffect(() => {
-    if (!profile || profile.role !== 'worker' || !qrToken || !supabase || !session) return
+    if (!pendingQrToken || !session || profile?.role !== 'worker' || todayLoadedFor !== profile.id || scanDialog) return
+    const record = todayRecords.find((item) => item.worker_id === profile.id)
+    setScanEvent(record?.check_in_at ? 'Salida' : 'Ingreso')
+    setScanDialog('confirm')
+  }, [pendingQrToken, session, profile, todayLoadedFor, todayRecords, scanDialog])
+
+  async function confirmAttendanceScan() {
+    if (!supabase || (!pendingQrToken && !pendingAttendanceCode) || !profile || profile.role !== 'worker') return
     setBusy(true)
-    void (async () => {
-      try {
-        const { data, error } = await supabase.rpc('record_attendance_scan', { p_qr_token: qrToken })
-        if (error) throw error
-        setLastMarked(data as AttendanceRecord)
-        setNotice({ tone: 'success', text: 'Marca guardada en Supabase. La copia de Google Sheets puede tardar hasta 5 minutos.' })
-        window.history.replaceState({}, '', window.location.pathname)
-      } catch (error) {
-        const message = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
-          ? error.message
-          : 'No se pudo registrar la marca.'
-        setNotice({ tone: 'error', text: message })
-      } finally {
-        setBusy(false)
-        void loadData(profile).catch(() => undefined)
+    setNotice(null)
+    try {
+      const { data, error } = pendingQrToken
+        ? await supabase.rpc('record_attendance_scan', { p_qr_token: pendingQrToken })
+        : await supabase.rpc('record_attendance_code', { p_code: pendingAttendanceCode })
+      if (error) throw error
+      let record = data as AttendanceRecord
+      if (!pendingQrToken) {
+        const result = data as { ok?: boolean; error?: string; record?: AttendanceRecord }
+        if (!result.ok || !result.record) throw new Error(result.error || 'No se pudo validar la clave.')
+        record = result.record
       }
-    })()
-  }, [profile, qrToken, session, loadData])
+      setLastMarked(record)
+      setPendingQrToken(null)
+      setPendingAttendanceCode(null)
+      setAttendanceCodeInput('')
+      setScanDialog('success')
+      void loadData(profile).catch(() => undefined)
+    } catch (error) {
+      const message = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message
+        : 'No se pudo registrar la marca.'
+      setPendingQrToken(null)
+      setPendingAttendanceCode(null)
+      setScanDialog(null)
+      setNotice({ tone: 'error', text: message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function submitAttendanceCode() {
+    if (!profile || profile.role !== 'worker') return
+    const code = attendanceCodeInput.trim()
+    if (!/^\d{4}$/.test(code)) {
+      setNotice({ tone: 'error', text: 'Ingresa la clave completa de 4 dígitos.' })
+      return
+    }
+    setNotice(null)
+    setPendingAttendanceCode(code)
+    setScanEvent(todayRecords.find((item) => item.worker_id === profile.id)?.check_in_at ? 'Salida' : 'Ingreso')
+    setScanDialog('confirm')
+  }
 
   async function signIn(event: FormEvent) {
     event.preventDefault()
@@ -303,7 +348,7 @@ function App() {
           <h2>Bienvenido</h2>
           <p className="muted">Ingresa con el correo y contraseña de tu cuenta.</p>
           {authLinkError && <div className="inline-notice notice-error"><span><X size={17} /></span><span>{authLinkError}</span></div>}
-          {qrToken && <div className="inline-notice notice-info"><ShieldCheck size={17} /> QR leído. Inicia sesión para registrar tu marca.</div>}
+          {pendingQrToken && <div className="inline-notice notice-info"><ShieldCheck size={17} /> QR leído. Inicia sesión para confirmar tu marca.</div>}
           <form onSubmit={signIn} className="form-stack">
             <label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nombre@dkpartners.com" autoComplete="username" required /></label>
             <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Tu contraseña" autoComplete="current-password" required /></label>
@@ -359,6 +404,14 @@ function App() {
         <div className="page-content">
           <div className="page-heading"><div><span className="eyebrow">{isAdmin ? 'PANEL DE CONTROL' : 'MI ASISTENCIA'}</span><h1>{isAdmin ? 'Hola, ' : 'Hola, '}{profile.full_name?.split(' ')[0]}<span className="heading-period">.</span></h1><p>{displayDate}</p><a className="sheet-link" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Abrir hoja de asistencia</a></div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
           {notice && <Notice notice={notice} dismiss={() => setNotice(null)} />}
+          {scanDialog && !isAdmin && <AttendanceScanDialog
+            mode={scanDialog}
+            event={scanEvent}
+            busy={busy}
+            onConfirm={confirmAttendanceScan}
+            onCancel={() => { setScanDialog(null); setPendingQrToken(null); setPendingAttendanceCode(null) }}
+            onClose={() => setScanDialog(null)}
+          />}
 
           {isAdmin ? (
             <AdminDashboard
@@ -380,6 +433,9 @@ function App() {
               record={ownRecord}
               history={history}
               lastMarked={lastMarked}
+              code={attendanceCodeInput}
+              onCodeChange={setAttendanceCodeInput}
+              onSubmitCode={submitAttendanceCode}
               busy={busy}
               clock={clock}
               onRefresh={() => loadData(profile).catch((error) => setNotice({ tone: 'error', text: error.message }))}
@@ -390,6 +446,33 @@ function App() {
       </section>
     </main>
   )
+}
+
+function AttendanceScanDialog(props: {
+  mode: 'confirm' | 'success'
+  event: 'Ingreso' | 'Salida'
+  busy: boolean
+  onConfirm: () => void
+  onCancel: () => void
+  onClose: () => void
+}) {
+  const { mode, event, busy, onConfirm, onCancel, onClose } = props
+  return <div className="scan-modal-backdrop">
+    <section className="scan-modal" role="dialog" aria-modal="true" aria-labelledby="scan-modal-title">
+      <div className={`scan-modal-icon ${mode === 'success' ? 'scan-modal-icon-success' : ''}`}>
+        {mode === 'success' ? <CheckCircle2 size={25} /> : <ShieldCheck size={25} />}
+      </div>
+      <span className="eyebrow">CONTROL DE ASISTENCIA</span>
+      <h2 id="scan-modal-title">{mode === 'success' ? '¡Marca registrada!' : `¿Confirmas tu ${event.toLowerCase()}?`}</h2>
+      <p>{mode === 'success'
+        ? `Tu asistencia de ${event.toLowerCase()} quedó guardada en Supabase. La copia de Google Sheets se sincroniza en segundo plano.`
+        : `Se registrará tu ${event.toLowerCase()} con la hora actual. Confirma solo si estás listo para marcar.`}</p>
+      {mode === 'confirm' ? <div className="scan-modal-actions">
+        <button className="button button-secondary" onClick={onCancel} disabled={busy}>Cancelar</button>
+        <button className="button button-primary" onClick={onConfirm} disabled={busy}>{busy ? 'Registrando…' : 'Sí, registrar'}</button>
+      </div> : <button className="button button-primary button-wide" onClick={onClose}>Aceptar</button>}
+    </section>
+  </div>
 }
 
 function Notice({ notice, dismiss }: { notice: Notice; dismiss?: () => void }) {
@@ -436,8 +519,9 @@ function AdminDashboard(props: {
           {qrSession ? <QRCodeSVG value={qrUrl} size={148} level="H" includeMargin /> : <div className="qr-placeholder"><div className="qr-corner qr-corner-tl" /><div className="qr-corner qr-corner-tr" /><div className="qr-corner qr-corner-bl" /><div className="qr-grid"><span /><span /><span /><span /><span /><span /><span /><span /><span /></div></div>}
         </div>
         <div className="qr-caption">{qrSession ? `Válido hasta ${formatTime(qrSession.expires_at)}` : 'Genera el código para iniciar los marcajes'}</div>
-        <button className="button button-primary button-wide" onClick={onCreateQr} disabled={busy}><RefreshCw size={16} className={busy ? 'spin' : ''} /> {qrSession ? 'Renovar código QR' : 'Generar código QR'}</button>
-        <div className="qr-note"><ShieldCheck size={14} /> Solo funciona para trabajadores con sesión iniciada</div>
+        {qrSession?.access_code && <div className="attendance-short-code"><span>CLAVE MANUAL</span><strong>{qrSession.access_code}</strong><small>El equipo puede escanear el QR o ingresar esta clave.</small></div>}
+        <button className="button button-primary button-wide" onClick={onCreateQr} disabled={busy}><RefreshCw size={16} className={busy ? 'spin' : ''} /> {qrSession ? 'Renovar QR y clave' : 'Generar QR y clave'}</button>
+        <div className="qr-note"><ShieldCheck size={14} /> QR y clave vencen juntos a las 12 horas</div>
       </section>
 
       <section className="panel sync-panel">
@@ -458,7 +542,7 @@ function Metric({ icon, label, value, note, tone }: { icon: ReactNode; label: st
   return <article className="metric-card"><div className={`metric-icon tone-${tone}`}>{icon}</div><span className="metric-label">{label}</span><strong className="metric-value">{value}</strong><span className="metric-note">{note}</span><ArrowUpRight size={15} className="metric-arrow" /></article>
 }
 
-function WorkerDashboard({ record, history, lastMarked, busy, clock, onRefresh }: { record?: AttendanceRecord; history: AttendanceRecord[]; lastMarked: AttendanceRecord | null; busy: boolean; clock: Date; onRefresh: () => void }) {
+function WorkerDashboard({ record, history, lastMarked, code, onCodeChange, onSubmitCode, busy, clock, onRefresh }: { record?: AttendanceRecord; history: AttendanceRecord[]; lastMarked: AttendanceRecord | null; code: string; onCodeChange: (value: string) => void; onSubmitCode: () => void; busy: boolean; clock: Date; onRefresh: () => void }) {
   const hasStarted = Boolean(record?.check_in_at)
   const hasFinished = Boolean(record?.check_out_at)
   return <div className="worker-grid">
@@ -467,7 +551,11 @@ function WorkerDashboard({ record, history, lastMarked, busy, clock, onRefresh }
       {lastMarked && <div className="mark-success"><CheckCircle2 size={19} /><div><strong>Marca registrada</strong><span>{lastMarked.check_out_at ? 'Salida' : 'Entrada'} · {formatTime(lastMarked.check_out_at || lastMarked.check_in_at)}</span></div></div>}
       <div className="work-summary"><div className="work-summary-icon"><Clock3 size={20} /></div><div><span>TIEMPO TRABAJADO</span><strong>{workedTime(record)}</strong></div><StatusPill record={record} /></div>
       <div className="timeline"><div className={`timeline-item ${hasStarted ? 'timeline-complete' : 'timeline-next'}`}><span className="timeline-marker">{hasStarted ? <Check size={13} /> : <ArrowDownToLine size={13} />}</span><div><span>ENTRADA</span><strong>{formatTime(record?.check_in_at)}</strong></div><small>{hasStarted ? 'Registrada' : 'Pendiente'}</small></div><div className="timeline-divider" /><div className={`timeline-item ${hasFinished ? 'timeline-complete' : hasStarted ? 'timeline-next' : ''}`}><span className="timeline-marker">{hasFinished ? <Check size={13} /> : <ArrowUpRight size={13} />}</span><div><span>SALIDA</span><strong>{formatTime(record?.check_out_at)}</strong></div><small>{hasFinished ? 'Registrada' : hasStarted ? 'Al volver a escanear' : 'Pendiente'}</small></div></div>
-      <div className="scan-hint"><ShieldCheck size={16} /><p>Escanea el QR que muestra tu jefe para registrar {hasStarted ? 'tu salida' : 'tu entrada'}. Necesitas tener la sesión iniciada.</p></div>
+      <div className="scan-hint"><ShieldCheck size={16} /><p>Escanea el QR o ingresa la clave de 4 dígitos que muestra tu jefe para registrar {hasStarted ? 'tu salida' : 'tu entrada'}.</p></div>
+      <form className="attendance-code-form" onSubmit={(event) => { event.preventDefault(); onSubmitCode() }}>
+        <label htmlFor="attendance-code">¿No puedes escanear? Escribe la clave</label>
+        <div><input id="attendance-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{4}" maxLength={4} placeholder="0000" value={code} onChange={(event) => onCodeChange(event.target.value.replace(/\D/g, '').slice(0, 4))} disabled={busy || hasFinished} /><button className="button button-secondary" type="submit" disabled={busy || hasFinished || code.length !== 4}>Continuar</button></div>
+      </form>
       {busy && <div className="loading-line"><span className="loader loader-small" /> Procesando marca…</div>}
     </section>
     <section className="panel history-panel"><div className="panel-heading"><div><span className="eyebrow">TU REGISTRO</span><h2>Últimos días</h2></div><CalendarDays size={19} className="muted-icon" /></div><div className="history-list">{history.map((item) => <div className="history-item" key={item.id}><div className="history-day"><strong>{formatDate(new Date(`${item.work_date}T12:00:00`), { day: '2-digit' })}</strong><span>{formatDate(new Date(`${item.work_date}T12:00:00`), { month: 'short' }).replace('.', '')}</span></div><div className="history-date"><strong>{formatDate(new Date(`${item.work_date}T12:00:00`), { weekday: 'long' })}</strong><span>{formatTime(item.check_in_at)} — {formatTime(item.check_out_at)}</span></div><div className="history-hours">{workedTime(item)}</div></div>)}{history.length === 0 && <div className="history-empty">Tus marcas aparecerán aquí.</div>}</div><div className="history-foot"><span>Zona horaria</span><strong>Perú · UTC−5</strong></div></section>

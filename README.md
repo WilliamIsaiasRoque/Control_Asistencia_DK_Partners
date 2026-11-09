@@ -14,7 +14,7 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
 1. Instala Node.js LTS y Git.
 2. Copia `.env.example` como `.env` y pega la URL y la clave pública publishable del proyecto Supabase. Si el panel todavía muestra la clave legacy `anon`, también se acepta como `VITE_SUPABASE_ANON_KEY`.
 3. Desde la carpeta del repo ejecuta `npm install` y luego `npm run dev`.
-4. Aplica la migración `supabase/migrations/202611070001_initial_schema.sql`.
+4. Aplica la migración `supabase/migrations/202611070001_initial_schema.sql` y luego `supabase/migrations/202611090002_attendance_short_code.sql`.
 5. Crea las cuentas desde **Authentication → Users → Add user → Create new user** (no uses **Invite user**, que intenta enviar un correo). Asigna una contraseña temporal y confirma el correo desde el panel. El trigger crea automáticamente el perfil `worker`; cada persona puede cambiar su contraseña después de iniciar sesión desde **Cambiar contraseña**. Si alguien la olvida, el administrador le asigna otra desde Supabase.
 6. Cambia el rol del jefe a `admin` desde el SQL Editor:
 
@@ -61,9 +61,9 @@ Para habilitar el flujo automático, todavía hay que completar la configuració
 La hoja debe tener pestañas nombradas con el mes en español (`NOVIEMBRE`, `DICIEMBRE`, etc.), las fechas como valores de fecha reales y los nombres de perfil que correspondan a los encabezados de fila 1. La función no crea filas ni modifica las fórmulas de horas.
 ## QR y reglas de marcas
 
-- El jefe genera un QR desde su panel. Renovarlo revoca el anterior; el actual vence a las 12 horas.
+- El jefe genera desde el panel un QR y una clave numérica de 4 dígitos para la misma sesión. Cualquiera de los dos métodos sirve; renovarlos revoca ambos anteriores y vencen juntos a las 12 horas. La clave permite cinco intentos por trabajador cada 15 minutos.
 - Cada trabajador inicia sesión individualmente y escanea el QR con la cámara del teléfono. Si la sesión está cerrada, el enlace pide iniciar sesión y luego procesa el QR.
-- Primer escaneo válido del día peruano registra entrada; el siguiente registra salida. Hay una pausa de 30 segundos para evitar que un doble toque cierre la jornada.
+- Al abrir un QR, la app retira `?qr=...` de la barra de direcciones y conserva el token solo en memoria mientras se confirma. El trabajador también puede escribir la clave. Ambos métodos muestran una confirmación de Ingreso o Salida; solo al aceptar se guarda la marca. Si se cancela, no se registra nada. Tras guardar aparece el aviso de éxito y la persona permanece en su panel.
 - Solo se permite una entrada y una salida por persona y fecha. Las correcciones manuales quedan reservadas para administrador.
 - El QR demuestra que se conoce el código vigente; no verifica por sí solo la ubicación física. El jefe debe mostrarlo solo al equipo presente.
 
