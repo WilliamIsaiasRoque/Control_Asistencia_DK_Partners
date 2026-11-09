@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ExternalLink,
   Clock3,
   LogOut,
   RefreshCw,
@@ -27,6 +28,7 @@ type QrSession = { token: string; expires_at: string }
 type Notice = { tone: 'success' | 'error' | 'info'; text: string }
 
 const PERU_ZONE = 'America/Lima'
+const GOOGLE_SHEETS_URL = 'https://docs.google.com/spreadsheets/d/1qtxU2ZZEraO4h07jq0SD3mXlUhCMcltmuIhxw7sOetE/edit'
 
 function localDateKey(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: PERU_ZONE }).format(date)
@@ -174,13 +176,16 @@ function App() {
         const { data, error } = await supabase.rpc('record_attendance_scan', { p_qr_token: qrToken })
         if (error) throw error
         setLastMarked(data as AttendanceRecord)
-        setNotice({ tone: 'success', text: 'Marca registrada correctamente.' })
+        setNotice({ tone: 'success', text: 'Marca guardada en Supabase. La copia de Google Sheets puede tardar hasta 5 minutos.' })
         window.history.replaceState({}, '', window.location.pathname)
-        await loadData(profile)
       } catch (error) {
-        setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'No se pudo registrar la marca.' })
+        const message = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+          ? error.message
+          : 'No se pudo registrar la marca.'
+        setNotice({ tone: 'error', text: message })
       } finally {
         setBusy(false)
+        void loadData(profile).catch(() => undefined)
       }
     })()
   }, [profile, qrToken, session, loadData])
@@ -352,7 +357,7 @@ function App() {
           <div className="topbar-user"><div className="avatar">{profile.full_name?.slice(0, 1).toUpperCase() || 'D'}</div><div className="user-copy"><strong>{profile.full_name}</strong><span>{isAdmin ? 'Administrador' : 'Trabajador'}</span></div><button className="text-button password-change-trigger" onClick={() => { setNotice(null); setPasswordChangeOpen(true) }}>Cambiar contraseña</button><button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={signOut}><LogOut size={17} /></button></div>
         </header>
         <div className="page-content">
-          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? 'PANEL DE CONTROL' : 'MI ASISTENCIA'}</span><h1>{isAdmin ? 'Hola, ' : 'Hola, '}{profile.full_name?.split(' ')[0]}<span className="heading-period">.</span></h1><p>{displayDate}</p></div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
+          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? 'PANEL DE CONTROL' : 'MI ASISTENCIA'}</span><h1>{isAdmin ? 'Hola, ' : 'Hola, '}{profile.full_name?.split(' ')[0]}<span className="heading-period">.</span></h1><p>{displayDate}</p><a className="sheet-link" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Abrir hoja de asistencia</a></div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
           {notice && <Notice notice={notice} dismiss={() => setNotice(null)} />}
 
           {isAdmin ? (

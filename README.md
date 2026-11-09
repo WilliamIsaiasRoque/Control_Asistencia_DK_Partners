@@ -24,6 +24,8 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
    where id = (select id from auth.users where email = 'CORREO_DEL_JEFE');
    ```
 
+Si la cuenta ya existe pero nunca llegó a tener contraseña, usa `scripts/set-auth-password.ps1` desde PowerShell para establecer una temporal mediante la API administrativa de Supabase. El script la solicita en pantalla segura y no guarda la Secret API key ni la contraseña en el repo. Nunca pegues esa clave en el frontend, Git o el chat.
+
 Para pruebas locales, Vite usa el puerto fijo `5174`. Configura **Authentication → URL Configuration** con `http://localhost:5174` como Site URL y agrega `http://localhost:5174/**` a Redirect URLs. Este flujo no necesita SMTP ni correos de invitación; el equipo entra con las contraseñas temporales creadas por el admin y puede cambiarlas dentro de la app.
 
 La clave incluida en `.env` es pública y está restringida por RLS. No agregues claves privadas, JSON de Service Account ni secretos al frontend o a Git.
@@ -38,33 +40,25 @@ La clave incluida en `.env` es pública y está restringida por RLS. No agregues
 
 ## Google Sheets
 
-La Edge Function usa una Service Account y Sheets API. Para las tres personas, las cuotas de Google son holgadas y la API estándar no agrega un cargo.
+La app sincroniza hacia el formato semanal existente de Google Sheets. Supabase sigue siendo la fuente oficial; los datos del Sheet son una copia de consulta. La hoja compartida es: https://docs.google.com/spreadsheets/d/1qtxU2ZZEraO4h07jq0SD3mXlUhCMcltmuIhxw7sOetE/edit
 
-1. En Google Cloud crea un proyecto, habilita **Google Sheets API** y crea una Service Account.
-2. Copia el correo de la Service Account y comparte el Google Sheet con ese correo como **Editor**. El equipo debe recibir acceso de **Lector**.
-3. Guarda el ID del Sheet (el texto entre `/d/` y `/edit` en su enlace). No publiques el JSON descargado de la cuenta.
-4. Configura estos secretos en el proyecto Supabase:
+Cada pestaña mensual debe conservar este diseño:
 
-   ```text
-   GOOGLE_SHEETS_ID=<id del spreadsheet>
-   GOOGLE_SHEETS_TAB=Registro automático
-   GOOGLE_SERVICE_ACCOUNT_EMAIL=<correo de la service account>
-   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=<private_key del JSON, incluyendo BEGIN/END>
-   SYNC_CRON_SECRET=<cadena aleatoria larga>
-   ```
+- Fila 1: nombre del trabajador sobre su bloque de columnas.
+- Fila 2: `Día`, `Fecha` y, para cada trabajador, `Ingreso`, `Salida`, `Horas`.
+- Filas siguientes: una fila por fecha. La app solo actualiza Ingreso y Salida; las fórmulas existentes calculan Horas y totales.
+- Formato horario de las columnas Ingreso/Salida: `h:mm AM/PM`. En las pestañas actuales, las columnas son D:E para William, H:I para Rommel y L:M para Shantal. Se corrigió el formato de la marca de 14:15 para mostrar 2:15 PM.
+- La pestaña oculta `_SYNC_IDS` guarda el UUID de Supabase y la ubicación de la fila, para reintentar sin duplicar.
 
-   Ejemplo de despliegue de Edge Function: `supabase secrets set --env-file supabase/functions/.env` (no subas ese archivo a Git). `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` son valores internos del proyecto y nunca se colocan en el navegador.
+Para habilitar el flujo automático, todavía hay que completar la configuración en Supabase y Google Cloud:
 
-5. En **Database → Extensions**, habilita `pg_cron`, `pg_net` y `supabase_vault`. Despliega `supabase/functions/sync-google-sheets` y aplica una sola vez `supabase/setup_cron.sql` en SQL Editor. Reemplaza los dos marcadores: URL de la función y el mismo valor de `SYNC_CRON_SECRET`. El cron revisa la cola cada cinco minutos.
-6. La función crea una pestaña `Registro automático` si no existe. La tabla de esa pestaña es:
+1. En Google Cloud habilita **Google Sheets API** y crea una Service Account.
+2. Comparte la hoja con el correo de la Service Account como **Editor**. Comparte con cada persona de la empresa como **Lector**; el enlace por sí solo no da acceso a un documento restringido.
+3. Configura en Supabase los secretos `GOOGLE_SHEETS_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` y `SYNC_CRON_SECRET`. La llave privada y el secreto de cron nunca van al frontend ni al repositorio.
+4. Despliega la función `sync-google-sheets` después de publicar estos cambios. Habilita `pg_cron`, `pg_net` y Vault; configura `supabase/setup_cron.sql` con la URL desplegada y el mismo secreto de cron.
+5. El cron revisa cada cinco minutos la cola `sync_log`. Las marcas se guardan primero en Supabase aunque Google falle. Los errores quedan registrados con estado, texto y número de intentos; al corregir la configuración, el botón de re-sincronización vuelve a poner el rango en cola.
 
-   | FECHA | TRABAJADOR | INGRESO | SALIDA | HORAS TRABAJADAS | ATTENDANCE_ID |
-   |---|---|---|---|---|---|
-
-   La última columna es una clave técnica estable y se puede ocultar. La función actualiza esa fila al recibir la salida y usa `ATTENDANCE_ID` para que los reintentos no dupliquen filas.
-
-**Pendiente de adaptar a tu archivo:** todavía no se recibió el enlace del Sheet. Por eso la función crea una pestaña técnica con estructura normalizada. Cuando compartas el enlace, se puede conectar al diseño semanal existente (semana/día y grupos de columnas por trabajador) en lugar de dejar dos formatos distintos.
-
+La hoja debe tener pestañas nombradas con el mes en español (`NOVIEMBRE`, `DICIEMBRE`, etc.), las fechas como valores de fecha reales y los nombres de perfil que correspondan a los encabezados de fila 1. La función no crea filas ni modifica las fórmulas de horas.
 ## QR y reglas de marcas
 
 - El jefe genera un QR desde su panel. Renovarlo revoca el anterior; el actual vence a las 12 horas.
