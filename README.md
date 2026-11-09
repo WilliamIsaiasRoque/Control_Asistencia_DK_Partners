@@ -12,7 +12,7 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
 ## Primer arranque local
 
 1. Instala Node.js LTS y Git.
-2. Copia `.env.example` como `.env` y pega la URL y la clave pública (anon/publishable) del proyecto Supabase.
+2. Copia `.env.example` como `.env` y pega la URL y la clave pública publishable del proyecto Supabase. Si el panel todavía muestra la clave legacy `anon`, también se acepta como `VITE_SUPABASE_ANON_KEY`.
 3. Desde la carpeta del repo ejecuta `npm install` y luego `npm run dev`.
 4. Crea las cuentas desde Supabase Auth. El trigger crea automáticamente un perfil `worker`; después cambia el rol del jefe a `admin` desde el SQL Editor:
 
