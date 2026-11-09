@@ -182,6 +182,20 @@ function App() {
   }, [profile, loadData])
 
   useEffect(() => {
+    if (!supabase || profile?.role !== 'admin') return
+    let alive = true
+    void supabase.rpc('get_current_attendance_session').then(({ data, error }) => {
+      if (!alive) return
+      if (error) {
+        setNotice({ tone: 'error', text: 'No se pudo recuperar el QR y la clave. Revisa que las migraciones de asistencia estén aplicadas.' })
+        return
+      }
+      setQrSession(data as QrSession | null)
+    })
+    return () => { alive = false }
+  }, [profile])
+
+  useEffect(() => {
     if (!pendingQrToken || !session || profile?.role !== 'worker' || todayLoadedFor !== profile.id || scanDialog) return
     const record = todayRecords.find((item) => item.worker_id === profile.id)
     setScanEvent(record?.check_in_at ? 'Salida' : 'Ingreso')
@@ -286,8 +300,11 @@ function App() {
     const { data, error } = await supabase.rpc('create_attendance_qr_session')
     if (error) setNotice({ tone: 'error', text: error.message })
     else {
-      setQrSession(data as QrSession)
-      setNotice({ tone: 'success', text: 'Código actualizado. El código anterior ya no funciona.' })
+      const createdSession = data as Partial<QrSession>
+      setQrSession(createdSession as QrSession)
+      setNotice(createdSession.access_code
+        ? { tone: 'success', text: 'QR y clave actualizados. Los anteriores ya no funcionan.' }
+        : { tone: 'error', text: 'Se generó el QR, pero Supabase no devolvió la clave. Ejecuta la migración de clave corta y vuelve a generar.' })
     }
     setBusy(false)
   }
