@@ -168,16 +168,20 @@ function App() {
   useEffect(() => {
     if (!profile || profile.role !== 'worker' || !qrToken || !supabase || !session) return
     setBusy(true)
-    supabase.rpc('record_attendance_scan', { p_qr_token: qrToken })
-      .then(({ data, error }) => {
+    void (async () => {
+      try {
+        const { data, error } = await supabase.rpc('record_attendance_scan', { p_qr_token: qrToken })
         if (error) throw error
         setLastMarked(data as AttendanceRecord)
         setNotice({ tone: 'success', text: 'Marca registrada correctamente.' })
         window.history.replaceState({}, '', window.location.pathname)
-        return loadData(profile)
-      })
-      .catch((error) => setNotice({ tone: 'error', text: error.message }))
-      .finally(() => setBusy(false))
+        await loadData(profile)
+      } catch (error) {
+        setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'No se pudo registrar la marca.' })
+      } finally {
+        setBusy(false)
+      }
+    })()
   }, [profile, qrToken, session, loadData])
 
   async function signIn(event: FormEvent) {
