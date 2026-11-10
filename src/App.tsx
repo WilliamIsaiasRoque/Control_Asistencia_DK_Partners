@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   ExternalLink,
   Clock3,
+  Eye,
+  EyeOff,
   LogOut,
   RefreshCw,
   ShieldCheck,
@@ -64,6 +66,23 @@ function peruTimestamp(date: string, time: string) {
   return time ? new Date(`${date}T${time}:00-05:00`).toISOString() : null
 }
 
+function getErrorDetail(error: unknown) {
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message
+  if (!error || typeof error !== 'object') return 'Error desconocido.'
+  const value = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+  const detail = [value.message, value.details, value.hint]
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    .join(' · ')
+  if (detail) {
+    if (value.code === 'PGRST202' || value.code === '42883') {
+      return `${detail} Ejecuta en Supabase SQL Editor la migración 202611100002_admin_attendance_correction.sql.`
+    }
+    return value.code ? `${value.code}: ${detail}` : detail
+  }
+  return typeof value.code === 'string' ? value.code : 'Error desconocido.'
+}
+
 function workedTime(record?: AttendanceRecord | null) {
   if (!record?.check_in_at) return '0 h 00 min'
   const end = record.check_out_at ? new Date(record.check_out_at) : new Date()
@@ -84,6 +103,8 @@ function App() {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [rememberSession, setRememberSession] = useState(() => localStorage.getItem('dk_remember_session') !== 'false')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordChangeOpen, setPasswordChangeOpen] = useState(false)
@@ -110,6 +131,7 @@ function App() {
   const [scanEvent, setScanEvent] = useState<'Ingreso' | 'Salida'>('Ingreso')
   const [resyncFrom, setResyncFrom] = useState(localDateKey())
   const [resyncTo, setResyncTo] = useState(localDateKey())
+  const [adminSection, setAdminSection] = useState<'attendance' | 'correction'>('attendance')
   const [lastMarked, setLastMarked] = useState<AttendanceRecord | null>(null)
   const [clock, setClock] = useState(new Date())
 
@@ -271,6 +293,7 @@ function App() {
     if (!supabase) return
     setBusy(true)
     setNotice(null)
+    localStorage.setItem('dk_remember_session', rememberSession ? 'true' : 'false')
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
     if (error) setNotice({ tone: 'error', text: 'No se pudo iniciar sesión. Revisa tu correo y contraseña.' })
     setBusy(false)
@@ -385,7 +408,8 @@ function App() {
           {pendingQrToken && <div className="inline-notice notice-info"><ShieldCheck size={17} /> QR leído. Inicia sesión para confirmar tu marca.</div>}
           <form onSubmit={signIn} className="form-stack">
             <label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nombre@dkpartners.com" autoComplete="username" required /></label>
-            <label>Contraseña<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Tu contraseña" autoComplete="current-password" required /></label>
+            <label>Contraseña<div className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Tu contraseña" autoComplete="current-password" required /><button className="password-visibility" type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} aria-pressed={showPassword}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
+            <label className="remember-option"><input type="checkbox" checked={rememberSession} onChange={(event) => setRememberSession(event.target.checked)} /><span>Mantener sesión iniciada</span></label>
             {notice && <Notice notice={notice} />}
             <button className="button button-primary button-wide" disabled={busy}>{busy ? 'Ingresando…' : 'Ingresar'} <ArrowRight size={17} /></button>
             <p className="auth-help-note">¿Olvidaste tu contraseña? Pídele al administrador que te asigne una temporal.</p>
@@ -426,8 +450,16 @@ function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand brand-dark"><span className="brand-mark">DK</span><span>DK PARTNERS</span></div>
-        <div className="side-label">ESPACIO DE TRABAJO</div>
-        <div className="side-nav-item active"><CalendarDays size={18} /><span>Asistencia</span></div>
+        <div className="side-nav-groups">
+          <div className="sidebar-group">
+            <div className="side-label">ESPACIO DE TRABAJO</div>
+            <button type="button" className={`side-nav-item ${adminSection === 'attendance' ? 'active' : ''}`} onClick={() => setAdminSection('attendance')} title="Asistencia"><CalendarDays size={18} /><span>Asistencia</span></button>
+          </div>
+          {isAdmin && <div className="sidebar-group">
+            <div className="side-label side-label-admin">ADMINISTRACIÓN</div>
+            <button type="button" className={`side-nav-item ${adminSection === 'correction' ? 'active' : ''}`} onClick={() => setAdminSection('correction')} title="Corregir asistencia"><Clock3 size={18} /><span>Corregir asistencia</span></button>
+          </div>}
+        </div>
         <div className="sidebar-bottom"><div className="sidebar-stamp">DK<span>·</span>26</div><span>CONTROL INTERNO</span></div>
       </aside>
       <section className="main-column">
@@ -436,7 +468,7 @@ function App() {
           <div className="topbar-user"><div className="avatar">{profile.full_name?.slice(0, 1).toUpperCase() || 'D'}</div><div className="user-copy"><strong>{profile.full_name}</strong><span>{isAdmin ? 'Administrador' : 'Trabajador'}</span></div><button className="text-button password-change-trigger" onClick={() => { setNotice(null); setPasswordChangeOpen(true) }}>Cambiar contraseña</button><button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={signOut}><LogOut size={17} /></button></div>
         </header>
         <div className="page-content">
-          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? 'PANEL DE CONTROL' : 'MI ASISTENCIA'}</span><h1>{isAdmin ? 'Hola, ' : 'Hola, '}{profile.full_name?.split(' ')[0]}<span className="heading-period">.</span></h1><p>{displayDate}</p><a className="sheet-link" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Abrir hoja de asistencia</a></div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
+          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' ? 'ADMINISTRACIÓN' : 'PANEL DE CONTROL' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Abrir hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
           {notice && <Notice notice={notice} dismiss={() => setNotice(null)} />}
           {scanDialog && !isAdmin && <AttendanceScanDialog
             mode={scanDialog}
@@ -447,7 +479,9 @@ function App() {
             onClose={() => setScanDialog(null)}
           />}
 
-          {isAdmin ? (
+          {isAdmin && adminSection === 'correction' ? (
+            <AttendanceCorrectionPanel workers={history} onSaved={() => profile ? loadData(profile) : Promise.resolve()} />
+          ) : isAdmin ? (
             <AdminDashboard
               records={todayRecords}
               workers={history}
@@ -460,7 +494,6 @@ function App() {
               setTo={setResyncTo}
               onCreateQr={createQr}
               onResync={resync}
-              onCorrectionSaved={() => profile ? loadData(profile) : Promise.resolve()}
               clock={clock}
             />
           ) : (
@@ -520,9 +553,9 @@ function SetupNotice() {
 
 function AdminDashboard(props: {
   records: AttendanceRecord[]; workers: AttendanceRecord[]; logs: SyncLog[]; qrSession: QrSession | null; busy: boolean; from: string; to: string;
-  setFrom: (value: string) => void; setTo: (value: string) => void; onCreateQr: () => void; onResync: () => void; onCorrectionSaved: () => Promise<void>; clock: Date;
+  setFrom: (value: string) => void; setTo: (value: string) => void; onCreateQr: () => void; onResync: () => void; clock: Date;
 }) {
-  const { records, workers, logs, qrSession, busy, from, to, setFrom, setTo, onCreateQr, onResync, onCorrectionSaved, clock } = props
+  const { records, workers, logs, qrSession, busy, from, to, setFrom, setTo, onCreateQr, onResync, clock } = props
   const workersWithRecord = workers.map((worker) => ({ ...worker, ...(records.find((record) => record.worker_id === worker.worker_id) ?? {}) }))
   const present = records.filter((record) => record.check_in_at).length
   const completed = records.filter((record) => record.check_out_at).length
@@ -570,7 +603,6 @@ function AdminDashboard(props: {
         </div>
       </section>
 
-      <AttendanceCorrectionPanel workers={workers} onSaved={onCorrectionSaved} />
     </div>
   </>
 }
@@ -635,7 +667,7 @@ function AttendanceCorrectionPanel({ workers, onSaved }: { workers: AttendanceRe
 
   useEffect(() => {
     void loadAdjustments().catch((error) => {
-      const detail = error instanceof Error ? error.message : 'Error desconocido.'
+      const detail = getErrorDetail(error)
       setMessage({ tone: 'error', text: `No se pudo cargar la auditoría: ${detail}` })
     })
   }, [loadAdjustments])
@@ -675,7 +707,7 @@ function AttendanceCorrectionPanel({ workers, onSaved }: { workers: AttendanceRe
         setMessage({ tone: 'info', text: 'La corrección sí se guardó y quedó en cola. Actualiza el panel para ver los datos más recientes.' })
       }
     } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Error desconocido.'
+      const detail = getErrorDetail(error)
       setMessage({ tone: 'error', text: `No se pudo guardar la corrección: ${detail}` })
     } finally {
       setSaving(false)
