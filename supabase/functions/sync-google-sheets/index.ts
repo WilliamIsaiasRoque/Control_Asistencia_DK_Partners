@@ -17,7 +17,17 @@ type AttendanceRow = {
 type AppsScriptResult = { attendance_id: string; ok: boolean; error?: string }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Error desconocido al sincronizar.'
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string' && error.trim()) return error
+  if (error && typeof error === 'object') {
+    const value = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+    const parts = [value.message, value.details, value.hint]
+      .filter((part): part is string => typeof part === 'string' && Boolean(part.trim()))
+    if (typeof value.code === 'string' && value.code) parts.unshift(`Código ${value.code}`)
+    if (parts.length) return parts.join(' | ')
+    try { return JSON.stringify(error) } catch { /* fall through */ }
+  }
+  return 'Error desconocido al sincronizar.'
 }
 
 async function markSync(db: ReturnType<typeof createClient>, attendanceId: string, status: 'synced' | 'error', error: string | null) {
@@ -107,6 +117,7 @@ Deno.serve(async (request) => {
     return Response.json({ claimed: ids.length, synced, failed }, { headers: corsHeaders })
   } catch (error) {
     const message = errorMessage(error).slice(0, 1000)
+    console.error(`Error en sync-google-sheets: ${message}`)
     for (const id of claimedIds) {
       try { await markSync(db, id, 'error', message) } catch (updateError) {
         console.error(`No se pudo marcar como error ${id}: ${errorMessage(updateError)}`)

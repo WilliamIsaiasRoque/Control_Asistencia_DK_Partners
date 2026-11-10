@@ -47,6 +47,23 @@ function formatTime(value: string | null | undefined) {
   }).format(new Date(value))
 }
 
+function timeInputValue(value: string | null | undefined) {
+  if (!value) return ''
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: PERU_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(value))
+  const hour = parts.find((part) => part.type === 'hour')?.value ?? '00'
+  const minute = parts.find((part) => part.type === 'minute')?.value ?? '00'
+  return `${hour}:${minute}`
+}
+
+function peruTimestamp(date: string, time: string) {
+  return time ? new Date(`${date}T${time}:00-05:00`).toISOString() : null
+}
+
 function workedTime(record?: AttendanceRecord | null) {
   if (!record?.check_in_at) return '0 h 00 min'
   const end = record.check_out_at ? new Date(record.check_out_at) : new Date()
@@ -443,6 +460,7 @@ function App() {
               setTo={setResyncTo}
               onCreateQr={createQr}
               onResync={resync}
+              onCorrectionSaved={() => profile ? loadData(profile) : Promise.resolve()}
               clock={clock}
             />
           ) : (
@@ -502,9 +520,9 @@ function SetupNotice() {
 
 function AdminDashboard(props: {
   records: AttendanceRecord[]; workers: AttendanceRecord[]; logs: SyncLog[]; qrSession: QrSession | null; busy: boolean; from: string; to: string;
-  setFrom: (value: string) => void; setTo: (value: string) => void; onCreateQr: () => void; onResync: () => void; clock: Date;
+  setFrom: (value: string) => void; setTo: (value: string) => void; onCreateQr: () => void; onResync: () => void; onCorrectionSaved: () => Promise<void>; clock: Date;
 }) {
-  const { records, workers, logs, qrSession, busy, from, to, setFrom, setTo, onCreateQr, onResync, clock } = props
+  const { records, workers, logs, qrSession, busy, from, to, setFrom, setTo, onCreateQr, onResync, onCorrectionSaved, clock } = props
   const workersWithRecord = workers.map((worker) => ({ ...worker, ...(records.find((record) => record.worker_id === worker.worker_id) ?? {}) }))
   const present = records.filter((record) => record.check_in_at).length
   const completed = records.filter((record) => record.check_out_at).length
@@ -551,8 +569,143 @@ function AdminDashboard(props: {
           {logs.length === 0 && <div className="sync-empty">Todavía no hay registros en la cola.</div>}
         </div>
       </section>
+
+      <AttendanceCorrectionPanel workers={workers} onSaved={onCorrectionSaved} />
     </div>
   </>
+}
+
+type AttendanceAdjustment = {
+  id: string
+  worker_id: string
+  work_date: string
+  reason: string
+  old_check_in_at: string | null
+  old_check_out_at: string | null
+  new_check_in_at: string | null
+  new_check_out_at: string | null
+  created_at: string
+}
+
+function AttendanceCorrectionPanel({ workers, onSaved }: { workers: AttendanceRecord[]; onSaved: () => Promise<void> }) {
+  const [workerId, setWorkerId] = useState('')
+  const [workDate, setWorkDate] = useState(localDateKey())
+  const [checkIn, setCheckIn] = useState('')
+  const [checkOut, setCheckOut] = useState('')
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loadingRecord, setLoadingRecord] = useState(false)
+  const [adjustments, setAdjustments] = useState<AttendanceAdjustment[]>([])
+  const [message, setMessage] = useState<Notice | null>(null)
+  const workerName = (id: string) => workers.find((worker) => worker.worker_id === id)?.worker?.full_name || 'Trabajador'
+
+  useEffect(() => {
+    if (!workerId && workers.length) setWorkerId(workers[0].worker_id)
+  }, [workerId, workers])
+
+  const loadAdjustments = useCallback(async () => {
+    if (!supabase) return
+    const { data, error } = await supabase.from('attendance_adjustments')
+      .select('id,worker_id,work_date,reason,old_check_in_at,old_check_out_at,new_check_in_at,new_check_out_at,created_at')
+      .order('created_at', { ascending: false })
+      .limit(5)
+    if (error) throw error
+    setAdjustments((data ?? []) as AttendanceAdjustment[])
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    if (!supabase || !workerId || !workDate) return
+    setLoadingRecord(true)
+    setMessage(null)
+    supabase.from('attendance_records').select('check_in_at,check_out_at')
+      .eq('worker_id', workerId).eq('work_date', workDate).maybeSingle()
+      .then(({ data, error }) => {
+        if (!alive) return
+        if (error) {
+          setMessage({ tone: 'error', text: `No se pudo cargar la marca: ${error.message}` })
+          return
+        }
+        setCheckIn(timeInputValue(data?.check_in_at))
+        setCheckOut(timeInputValue(data?.check_out_at))
+      })
+      .finally(() => { if (alive) setLoadingRecord(false) })
+    return () => { alive = false }
+  }, [workerId, workDate])
+
+  useEffect(() => {
+    void loadAdjustments().catch((error) => {
+      const detail = error instanceof Error ? error.message : 'Error desconocido.'
+      setMessage({ tone: 'error', text: `No se pudo cargar la auditoría: ${detail}` })
+    })
+  }, [loadAdjustments])
+
+  async function submitCorrection(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase || !workerId || !workDate) return
+    if (reason.trim().length < 5) {
+      setMessage({ tone: 'error', text: 'Escribe el motivo de la corrección (mínimo 5 caracteres).' })
+      return
+    }
+    if (checkOut && !checkIn) {
+      setMessage({ tone: 'error', text: 'Para registrar una salida también debes indicar la entrada.' })
+      return
+    }
+    const checkInAt = peruTimestamp(workDate, checkIn)
+    const checkOutAt = peruTimestamp(workDate, checkOut)
+    if (checkInAt && checkOutAt && new Date(checkOutAt) < new Date(checkInAt)) {
+      setMessage({ tone: 'error', text: 'La salida no puede ser anterior a la entrada.' })
+      return
+    }
+    setSaving(true)
+    setMessage(null)
+    try {
+      const { error } = await supabase.rpc('admin_correct_attendance', {
+        p_worker_id: workerId,
+        p_work_date: workDate,
+        p_check_in_at: checkInAt,
+        p_check_out_at: checkOutAt,
+        p_reason: reason.trim(),
+      })
+      if (error) throw error
+      setReason('')
+      setMessage({ tone: 'success', text: 'Corrección guardada en Supabase y puesta en cola para Google Sheets.' })
+      const refreshes = await Promise.allSettled([onSaved(), loadAdjustments()])
+      if (refreshes.some((result) => result.status === 'rejected')) {
+        setMessage({ tone: 'info', text: 'La corrección sí se guardó y quedó en cola. Actualiza el panel para ver los datos más recientes.' })
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error desconocido.'
+      setMessage({ tone: 'error', text: `No se pudo guardar la corrección: ${detail}` })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <section className="panel correction-panel">
+    <div className="panel-heading"><div><span className="eyebrow">ADMINISTRACIÓN</span><h2>Corregir asistencia</h2></div><ShieldCheck size={18} className="muted-icon" /></div>
+    <p className="panel-description">La corrección se guarda en Supabase, exige un motivo y vuelve a poner esa fecha en la cola de sincronización.</p>
+    <form className="correction-form" onSubmit={submitCorrection}>
+      <label>Trabajador<select value={workerId} onChange={(event) => setWorkerId(event.target.value)} required disabled={saving || workers.length === 0}>
+        {workers.map((worker) => <option key={worker.worker_id} value={worker.worker_id}>{worker.worker?.full_name || 'Trabajador'}</option>)}
+      </select></label>
+      <label>Fecha<input type="date" value={workDate} onChange={(event) => setWorkDate(event.target.value)} required disabled={saving} /></label>
+      <label>Entrada<input type="time" value={checkIn} onChange={(event) => setCheckIn(event.target.value)} disabled={saving || loadingRecord} /></label>
+      <label>Salida<input type="time" value={checkOut} onChange={(event) => setCheckOut(event.target.value)} disabled={saving || loadingRecord} /></label>
+      <label className="correction-reason">Motivo de la corrección<input type="text" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Ej.: marcó tarde por una emergencia" minLength={5} maxLength={300} required disabled={saving} /></label>
+      <button className="button button-primary correction-submit" type="submit" disabled={saving || loadingRecord || !workerId}>{saving ? 'Guardando…' : 'Guardar corrección'}</button>
+    </form>
+    <div className="correction-footnote">Los horarios se interpretan como hora de Perú (UTC−5). Dejar ambos horarios vacíos limpia las marcas de ese día.</div>
+    {message && <div className="correction-message"><Notice notice={message} /></div>}
+    <div className="adjustment-history"><strong>Últimas correcciones</strong>
+      {adjustments.map((adjustment) => <div className="adjustment-row" key={adjustment.id}>
+        <span><b>{workerName(adjustment.worker_id)}</b> · {formatDate(new Date(`${adjustment.work_date}T12:00:00`), { day: '2-digit', month: 'short' })}</span>
+        <span>{timeInputValue(adjustment.old_check_in_at) || '—'} / {timeInputValue(adjustment.old_check_out_at) || '—'} → {timeInputValue(adjustment.new_check_in_at) || '—'} / {timeInputValue(adjustment.new_check_out_at) || '—'}</span>
+        <small>{adjustment.reason}</small>
+      </div>)}
+      {adjustments.length === 0 && <span className="adjustment-empty">Aún no hay correcciones.</span>}
+    </div>
+  </section>
 }
 
 function Metric({ icon, label, value, note, tone }: { icon: ReactNode; label: string; value: string; note: string; tone: string }) {

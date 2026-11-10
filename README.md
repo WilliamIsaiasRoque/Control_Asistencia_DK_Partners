@@ -42,7 +42,7 @@ La clave incluida en `.env` es pública y está restringida por RLS. No agregues
 
 La sincronización utiliza **Google Apps Script Web App** para no depender de una cuenta de facturación de Google Cloud. Supabase sigue siendo la fuente oficial; la hoja es una copia de consulta. La app escribe en el formato semanal existente: https://docs.google.com/spreadsheets/d/1qtxU2ZZEraO4h07jq0SD3mXlUhCMcltmuIhxw7sOetE/edit
 
-La hoja debe conservar sus pestañas mensuales (`NOVIEMBRE`, `DICIEMBRE`, etc.), los nombres de trabajadores en la fila 1 y `Día`, `Fecha` e `Ingreso`/`Salida`/`Horas` en la fila 2. Las fechas deben ser valores de fecha reales. El script solo modifica Ingreso y Salida; las fórmulas existentes calculan Horas y totales. El formato de hora es `h:mm AM/PM`. La pestaña oculta `_SYNC_IDS` guarda el UUID de Supabase para reintentar sin duplicados.
+La hoja debe conservar sus pestañas mensuales (`NOVIEMBRE`, `DICIEMBRE`, etc.), los nombres de trabajadores en la fila 1 y `Día`, `Fecha` e `Ingreso`/`Salida`/`Horas` en la fila 2. Las fechas deben ser valores de fecha reales. El script solo modifica Ingreso y Salida; las fórmulas existentes calculan Horas y totales. El formato de hora es `h:mm AM/PM`. Para que los totales semanales acumulen correctamente más de 24 horas, aplica a las celdas de total semanal el formato Duración o el formato personalizado `[h]:mm`. La pestaña oculta `_SYNC_IDS` guarda el UUID de Supabase para reintentar sin duplicados.
 
 ### Configuración
 
