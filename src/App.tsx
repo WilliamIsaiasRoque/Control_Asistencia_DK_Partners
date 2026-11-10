@@ -572,15 +572,17 @@ function WorkerHistoryDashboard({ workerId, clock }: { workerId: string; clock: 
 
   useEffect(() => {
     let alive = true
-    if (!supabase) return
+    const client = supabase
+    if (!client) return
     setLoading(true)
     setError('')
-    supabase.from('attendance_records').select('*')
-      .eq('worker_id', workerId)
-      .gte('work_date', monthStart)
-      .lte('work_date', monthEnd)
-      .order('work_date', { ascending: true })
-      .then(({ data, error: queryError }) => {
+    void (async () => {
+      try {
+        const { data, error: queryError } = await client.from('attendance_records').select('*')
+          .eq('worker_id', workerId)
+          .gte('work_date', monthStart)
+          .lte('work_date', monthEnd)
+          .order('work_date', { ascending: true })
         if (!alive) return
         if (queryError) {
           setError(queryError.message)
@@ -588,8 +590,15 @@ function WorkerHistoryDashboard({ workerId, clock }: { workerId: string; clock: 
           return
         }
         setRecords((data ?? []) as AttendanceRecord[])
-      })
-      .finally(() => { if (alive) setLoading(false) })
+      } catch (error) {
+        if (alive) {
+          setError(getErrorDetail(error))
+          setRecords([])
+        }
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
     return () => { alive = false }
   }, [workerId, monthStart, monthEnd])
 
@@ -768,12 +777,14 @@ function AttendanceCorrectionPanel({ workers, onSaved }: { workers: AttendanceRe
 
   useEffect(() => {
     let alive = true
-    if (!supabase || !workerId || !workDate) return
+    const client = supabase
+    if (!client || !workerId || !workDate) return
     setLoadingRecord(true)
     setMessage(null)
-    supabase.from('attendance_records').select('check_in_at,check_out_at')
-      .eq('worker_id', workerId).eq('work_date', workDate).maybeSingle()
-      .then(({ data, error }) => {
+    void (async () => {
+      try {
+        const { data, error } = await client.from('attendance_records').select('check_in_at,check_out_at')
+          .eq('worker_id', workerId).eq('work_date', workDate).maybeSingle()
         if (!alive) return
         if (error) {
           setMessage({ tone: 'error', text: `No se pudo cargar la marca: ${error.message}` })
@@ -781,8 +792,12 @@ function AttendanceCorrectionPanel({ workers, onSaved }: { workers: AttendanceRe
         }
         setCheckIn(timeInputValue(data?.check_in_at))
         setCheckOut(timeInputValue(data?.check_out_at))
-      })
-      .finally(() => { if (alive) setLoadingRecord(false) })
+      } catch (error) {
+        if (alive) setMessage({ tone: 'error', text: `No se pudo cargar la marca: ${getErrorDetail(error)}` })
+      } finally {
+        if (alive) setLoadingRecord(false)
+      }
+    })()
     return () => { alive = false }
   }, [workerId, workDate])
 
