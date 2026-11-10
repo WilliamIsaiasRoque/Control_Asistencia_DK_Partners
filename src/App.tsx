@@ -6,12 +6,15 @@ import {
   ArrowRight,
   ArrowUpRight,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Check,
   CheckCircle2,
   ExternalLink,
   Clock3,
   Eye,
   EyeOff,
+  History as HistoryIcon,
   LogOut,
   RefreshCw,
   ShieldCheck,
@@ -90,6 +93,23 @@ function workedTime(record?: AttendanceRecord | null) {
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`
 }
 
+function attendanceMinutes(record: AttendanceRecord, now = new Date()) {
+  if (!record.check_in_at) return null
+  if (!record.check_out_at && record.work_date !== localDateKey(now)) return null
+  const end = record.check_out_at ? new Date(record.check_out_at) : now
+  return Math.max(0, Math.floor((end.getTime() - new Date(record.check_in_at).getTime()) / 60000))
+}
+
+function formatDuration(minutes: number) {
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`
+}
+
+function changeMonth(month: string, amount: number) {
+  const [year, monthNumber] = month.split('-').map(Number)
+  const date = new Date(year, monthNumber - 1 + amount, 1)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
 function StatusPill({ record }: { record?: AttendanceRecord | null }) {
   if (!record?.check_in_at) return <span className="status-pill status-idle">Sin marcar</span>
   if (!record.check_out_at) return <span className="status-pill status-active"><span className="pulse-dot" /> En jornada</span>
@@ -131,7 +151,7 @@ function App() {
   const [scanEvent, setScanEvent] = useState<'Ingreso' | 'Salida'>('Ingreso')
   const [resyncFrom, setResyncFrom] = useState(localDateKey())
   const [resyncTo, setResyncTo] = useState(localDateKey())
-  const [adminSection, setAdminSection] = useState<'attendance' | 'correction'>('attendance')
+  const [adminSection, setAdminSection] = useState<'attendance' | 'correction' | 'history'>('attendance')
   const [lastMarked, setLastMarked] = useState<AttendanceRecord | null>(null)
   const [clock, setClock] = useState(new Date())
 
@@ -454,6 +474,7 @@ function App() {
           <div className="sidebar-group">
             <div className="side-label">ESPACIO DE TRABAJO</div>
             <button type="button" className={`side-nav-item ${adminSection === 'attendance' ? 'active' : ''}`} onClick={() => setAdminSection('attendance')} title="Asistencia"><CalendarDays size={18} /><span>Asistencia</span></button>
+            <button type="button" className={`side-nav-item ${adminSection === 'history' ? 'active' : ''}`} onClick={() => setAdminSection('history')} title={isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas'}>{isAdmin ? <Users size={18} /> : <HistoryIcon size={18} />}<span>{isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas'}</span></button>
           </div>
           {isAdmin && <div className="sidebar-group">
             <div className="side-label side-label-admin">ADMINISTRACIÓN</div>
@@ -464,11 +485,11 @@ function App() {
       </aside>
       <section className="main-column">
         <header className="topbar">
-          <div className="breadcrumb"><span>Equipo</span><span className="crumb-slash">/</span><strong>Asistencia</strong></div>
+          <div className="breadcrumb"><span>{isAdmin ? adminSection === 'history' ? 'Espacio de trabajo' : 'Administración' : 'Espacio de trabajo'}</span><span className="crumb-slash">/</span><strong>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : 'Asistencia'}</strong></div>
           <div className="topbar-user"><div className="avatar">{profile.full_name?.slice(0, 1).toUpperCase() || 'D'}</div><div className="user-copy"><strong>{profile.full_name}</strong><span>{isAdmin ? 'Administrador' : 'Trabajador'}</span></div><button className="text-button password-change-trigger" onClick={() => { setNotice(null); setPasswordChangeOpen(true) }}>Cambiar contraseña</button><button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={signOut}><LogOut size={17} /></button></div>
         </header>
         <div className="page-content">
-          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' ? 'ADMINISTRACIÓN' : 'PANEL DE CONTROL' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Abrir hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
+          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' ? 'ADMINISTRACIÓN' : adminSection === 'history' ? 'EQUIPO' : 'PANEL DE CONTROL' : adminSection === 'history' ? 'MI REGISTRO DE HORAS' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : adminSection === 'history' ? isAdmin ? 'Consulta las horas y marcas de cada trabajador.' : 'Consulta tus entradas, salidas y horas registradas.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link sheet-link-prominent" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Ver hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
           {notice && <Notice notice={notice} dismiss={() => setNotice(null)} />}
           {scanDialog && !isAdmin && <AttendanceScanDialog
             mode={scanDialog}
@@ -479,7 +500,9 @@ function App() {
             onClose={() => setScanDialog(null)}
           />}
 
-          {isAdmin && adminSection === 'correction' ? (
+          {adminSection === 'history' ? (
+            isAdmin ? <AdminTeamHistory workers={history} clock={clock} /> : <WorkerHistoryDashboard workerId={profile.id} clock={clock} />
+          ) : isAdmin && adminSection === 'correction' ? (
             <AttendanceCorrectionPanel workers={history} onSaved={() => profile ? loadData(profile) : Promise.resolve()} />
           ) : isAdmin ? (
             <AdminDashboard
@@ -514,6 +537,104 @@ function App() {
       </section>
     </main>
   )
+}
+
+function AdminTeamHistory({ workers, clock }: { workers: AttendanceRecord[]; clock: Date }) {
+  const [workerId, setWorkerId] = useState('')
+
+  useEffect(() => {
+    if (!workers.some((worker) => worker.worker_id === workerId)) {
+      setWorkerId(workers[0]?.worker_id ?? '')
+    }
+  }, [workerId, workers])
+
+  return <div className="team-history-page">
+    <section className="panel team-history-picker">
+      <div className="team-history-picker-copy"><span className="eyebrow">TRABAJADORES ACTIVOS</span><strong>Selecciona a quién consultar</strong></div>
+      <label>Trabajador<select value={workerId} onChange={(event) => setWorkerId(event.target.value)} disabled={workers.length === 0}>
+        {workers.map((worker) => <option key={worker.worker_id} value={worker.worker_id}>{worker.worker?.full_name || 'Trabajador'}</option>)}
+      </select></label>
+    </section>
+    {workerId ? <WorkerHistoryDashboard key={workerId} workerId={workerId} clock={clock} /> : <section className="panel team-history-empty">No hay trabajadores activos para mostrar.</section>}
+  </div>
+}
+
+function WorkerHistoryDashboard({ workerId, clock }: { workerId: string; clock: Date }) {
+  const [month, setMonth] = useState(() => localDateKey().slice(0, 7))
+  const [records, setRecords] = useState<AttendanceRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [year, monthNumber] = month.split('-').map(Number)
+  const monthLength = new Date(year, monthNumber, 0).getDate()
+  const monthStart = `${month}-01`
+  const monthEnd = `${month}-${String(monthLength).padStart(2, '0')}`
+  const todayMonth = localDateKey(clock).slice(0, 7)
+
+  useEffect(() => {
+    let alive = true
+    if (!supabase) return
+    setLoading(true)
+    setError('')
+    supabase.from('attendance_records').select('*')
+      .eq('worker_id', workerId)
+      .gte('work_date', monthStart)
+      .lte('work_date', monthEnd)
+      .order('work_date', { ascending: true })
+      .then(({ data, error: queryError }) => {
+        if (!alive) return
+        if (queryError) {
+          setError(queryError.message)
+          setRecords([])
+          return
+        }
+        setRecords((data ?? []) as AttendanceRecord[])
+      })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [workerId, monthStart, monthEnd])
+
+  const recordByDate = new Map(records.map((record) => [record.work_date, record]))
+  const markedDays = records.filter((record) => record.check_in_at).length
+  const completeDays = records.filter((record) => record.check_in_at && record.check_out_at).length
+  const totalMinutes = records.reduce((sum, record) => sum + (attendanceMinutes(record, clock) ?? 0), 0)
+  const monthDate = new Date(`${month}-01T12:00:00-05:00`)
+
+  return <div className="worker-history-page">
+    <section className="history-summary-grid">
+      <article className="history-summary-card"><span>DÍAS CON MARCA</span><strong>{String(markedDays).padStart(2, '0')}</strong><small>En este mes</small></article>
+      <article className="history-summary-card"><span>JORNADAS COMPLETAS</span><strong>{String(completeDays).padStart(2, '0')}</strong><small>Con entrada y salida</small></article>
+      <article className="history-summary-card history-summary-total"><span>HORAS REGISTRADAS</span><strong>{formatDuration(totalMinutes)}</strong><small>Incluye la jornada de hoy en curso</small></article>
+    </section>
+    <section className="panel month-history-panel">
+      <div className="panel-heading month-history-heading">
+        <div><span className="eyebrow">DETALLE DIARIO</span><h2>{formatDate(monthDate, { month: 'long', year: 'numeric' })}</h2></div>
+        <div className="month-controls">
+          <button className="icon-button icon-button-light" type="button" aria-label="Mes anterior" onClick={() => setMonth((current) => changeMonth(current, -1))}><ChevronLeft size={17} /></button>
+          <button className="icon-button icon-button-light" type="button" aria-label="Mes siguiente" disabled={month >= todayMonth} onClick={() => setMonth((current) => changeMonth(current, 1))}><ChevronRight size={17} /></button>
+        </div>
+      </div>
+      {error && <div className="history-load-error"><Notice notice={{ tone: 'error', text: `No se pudo cargar tu historial: ${error}` }} /></div>}
+      {loading ? <div className="history-loading"><span className="loader loader-small" /> Cargando historial…</div> : <>
+        <div className="month-history-grid">
+          {Array.from({ length: monthLength }, (_, index) => {
+            const day = index + 1
+            const dateKey = `${month}-${String(day).padStart(2, '0')}`
+            const date = new Date(`${dateKey}T12:00:00-05:00`)
+            const record = recordByDate.get(dateKey)
+            const elapsed = record ? attendanceMinutes(record, clock) : null
+            const status = record?.check_out_at ? 'complete' : record?.check_in_at ? 'open' : 'empty'
+            return <article className={`month-day-card month-day-${status}`} key={dateKey}>
+              <div className="month-day-heading"><div><span>{formatDate(date, { weekday: 'short' }).replace('.', '')}</span><strong>{String(day).padStart(2, '0')}</strong></div><span className={`month-day-status status-${status}`}>{status === 'complete' ? <><CheckCircle2 size={13} /> Jornada completa</> : status === 'open' ? <><span className="month-status-pulse" /> EN CURSO</> : 'Sin marca'}</span></div>
+              <div className="month-day-times"><div><span>ENTRADA</span><strong>{formatTime(record?.check_in_at)}</strong></div><div><span>SALIDA</span><strong>{formatTime(record?.check_out_at)}</strong></div></div>
+              <div className="month-day-total"><span>HORAS</span><strong>{elapsed === null ? record?.check_in_at ? 'Pendiente' : '—' : formatDuration(elapsed)}</strong></div>
+            </article>
+          })}
+        </div>
+        {records.length === 0 && <div className="month-history-empty"><CalendarDays size={18} /> Aún no tienes marcas registradas en este mes.</div>}
+      </>}
+      <div className="month-history-foot"><span>Horario mostrado en hora de Perú</span><span>Solo tú puedes ver este historial</span></div>
+    </section>
+  </div>
 }
 
 function AttendanceScanDialog(props: {
