@@ -936,11 +936,11 @@ function AttendanceLocationSettingsPanel() {
     <form className="location-settings-form" onSubmit={saveLocation}>
       <label>Latitud<input type="number" step="any" min="-90" max="90" value={latitude} onChange={(event) => setLatitude(event.target.value)} placeholder="-12.0000000" required disabled={busy || loading} /></label>
       <label>Longitud<input type="number" step="any" min="-180" max="180" value={longitude} onChange={(event) => setLongitude(event.target.value)} placeholder="-77.0000000" required disabled={busy || loading} /></label>
-      <label>Radio permitido (m)<input type="number" min="25" max="2000" value={radius} onChange={(event) => setRadius(event.target.value)} required disabled={busy || loading} /></label>
+      <label>Radio permitido (m)<input type="number" min="10" max="2000" value={radius} onChange={(event) => setRadius(event.target.value)} required disabled={busy || loading} /></label>
       <label>Precisión máxima (m)<input type="number" min="10" max="1000" value={maxAccuracy} onChange={(event) => setMaxAccuracy(event.target.value)} required disabled={busy || loading} /></label>
       <button className="button button-primary location-save-button" type="submit" disabled={busy || loading || !latitude || !longitude}>{busy ? 'Guardando…' : 'Guardar ubicación'}</button>
     </form>
-    <div className="location-settings-footnote">Punto inicial recomendado: radio 150 m y precisión máxima 150 m. Prueben primero con el celular en la tienda y ajusten si el GPS es inestable.</div>
+    <div className="location-settings-footnote">Radio recomendado para un control estricto: 10 m. La precisión máxima es otro filtro: con 10 m, el teléfono debe reportar una ubicación muy precisa. Si el GPS falla dentro del local, prueba mejorar la señal antes de ampliar esos límites.</div>
     {settings?.updated_at && <div className="location-updated-at">Última actualización: {formatDate(new Date(settings.updated_at), { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' })}</div>}
     {message && <div className="location-settings-message"><Notice notice={message} /></div>}
   </section>
