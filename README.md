@@ -7,14 +7,14 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
 - React + TypeScript + Vite para la interfaz.
 - Supabase Auth y Postgres para cuentas, marcas y registro de sincronización.
 - Supabase Edge Function + Google Sheets API para publicar filas de forma idempotente.
-- Cloudflare Pages para servir el frontend estático en el plan gratuito.
+- Vercel para servir el frontend estático en el plan Hobby.
 
 ## Primer arranque local
 
 1. Instala Node.js LTS y Git.
 2. Copia `.env.example` como `.env` y pega la URL y la clave pública publishable del proyecto Supabase. Si el panel todavía muestra la clave legacy `anon`, también se acepta como `VITE_SUPABASE_ANON_KEY`.
 3. Desde la carpeta del repo ejecuta `npm install` y luego `npm run dev`.
-4. Aplica la migración `supabase/migrations/202611070001_initial_schema.sql` y luego `supabase/migrations/202611090002_attendance_short_code.sql` y `supabase/migrations/202611090003_restore_active_attendance_session.sql`.
+4. En Supabase SQL Editor, aplica los archivos de `supabase/migrations/` en orden. Si el proyecto ya está configurado, aplica las migraciones que aún no ejecutaste, en particular `202611100003_allow_checkin_after_empty_correction.sql` y `202611130001_location_based_attendance.sql`.
 5. Crea las cuentas desde **Authentication → Users → Add user → Create new user** (no uses **Invite user**, que intenta enviar un correo). Asigna una contraseña temporal y confirma el correo desde el panel. El trigger crea automáticamente el perfil `worker`; cada persona puede cambiar su contraseña después de iniciar sesión desde **Cambiar contraseña**. Si alguien la olvida, el administrador le asigna otra desde Supabase.
 6. Cambia el rol del jefe a `admin` desde el SQL Editor:
 
@@ -36,7 +36,7 @@ La clave incluida en `.env` es pública y está restringida por RLS. No agregues
 2. Aplica la migración SQL.
 3. Crea las cuentas del jefe y los trabajadores desde **Authentication → Users → Add user → Create new user** (no **Invite user**). Asigna contraseña temporal y confirma cada correo desde el panel. Define los nombres en `profiles.full_name`.
 4. Promueve solo la cuenta del jefe a `admin`; las cuentas nuevas quedan como `worker`.
-5. Configura URL de redirección de Auth para el dominio local y el dominio de Cloudflare Pages.
+5. Configura URL de redirección de Auth para el dominio local y el dominio de Vercel.
 
 ## Google Sheets
 
@@ -54,14 +54,14 @@ La hoja debe conservar sus pestañas mensuales (`NOVIEMBRE`, `DICIEMBRE`, etc.),
 6. Registra una entrada de prueba. El cron la procesa dentro de cinco minutos. En el panel admin revisa el estado; ante errores, `sync_log` guarda el mensaje y los intentos, y reintenta automáticamente. El botón **Re-sincronizar con Google Sheets** permite volver a poner un rango en cola.
 
 El Sheet debe compartirse con los trabajadores como **Lector**. La cuenta de Apps Script admin no necesita compartir una credencial con Google Cloud ni crear una Service Account. Apps Script tiene cuotas diarias gratuitas, suficientes para este equipo; Google puede cambiarlas.
-## QR y reglas de marcas
+## Marcación con ubicación
 
-- Al recargar el panel admin, la app vuelve a consultar y muestra la sesión activa hasta su vencimiento; recargar no invalida el QR ni la clave.
-- El jefe genera desde el panel un QR y una clave numérica de 4 dígitos para la misma sesión. Cualquiera de los dos métodos sirve; renovarlos revoca ambos anteriores y vencen juntos a las 12 horas. La clave permite cinco intentos por trabajador cada 15 minutos.
-- Cada trabajador inicia sesión individualmente y escanea el QR con la cámara del teléfono. Si la sesión está cerrada, el enlace pide iniciar sesión y luego procesa el QR.
-- Al abrir un QR, la app retira `?qr=...` de la barra de direcciones y conserva el token solo en memoria mientras se confirma. El trabajador también puede escribir la clave. Ambos métodos muestran una confirmación de Ingreso o Salida; solo al aceptar se guarda la marca. Si se cancela, no se registra nada. Tras guardar aparece el aviso de éxito y la persona permanece en su panel.
-- Solo se permite una entrada y una salida por persona y fecha. Las correcciones manuales quedan reservadas para administrador.
-- El QR demuestra que se conoce el código vigente; no verifica por sí solo la ubicación física. El jefe debe mostrarlo solo al equipo presente.
+- El trabajador inicia sesión y pulsa **Marcar entrada** o **Marcar salida**. Tras confirmar, el navegador pide permiso de ubicación; Supabase acepta la marca solo si el dispositivo informa precisión suficiente y está dentro del radio permitido.
+- La app solicita ubicación únicamente al marcar. No rastrea al trabajador continuamente. Cada intento aceptado registra coordenadas, precisión y distancia en `attendance_location_events`, con lectura limitada al trabajador y al administrador.
+- Después de aplicar `202611130001_location_based_attendance.sql`, abre la app desplegada como administrador, desde un teléfono físicamente en la tienda, entra en **Administración → Ubicación del local**, pulsa **Usar mi ubicación actual** y luego **Guardar ubicación**. Empieza con radio de 150 m y precisión máxima de 150 m; prueba en los teléfonos del equipo y ajusta el radio si el GPS del local lo necesita.
+- Permite ubicación para el sitio y activa los servicios de ubicación del teléfono. Geolocation requiere HTTPS; Vercel lo sirve por HTTPS. Conviene configurar el punto y marcar desde teléfonos, porque algunas computadoras no tienen GPS preciso.
+- El administrador puede actualizar el punto desde esa sección. Las correcciones manuales siguen disponibles en **Corregir asistencia** y también se sincronizan con Google Sheets.
+- La migración deshabilita las funciones de marca antiguas por QR y clave corta para que no eviten la validación de ubicación. Los enlaces viejos `?qr=...` se limpian de la barra y no generan una marca.
 
 ## Hojas de cálculo y recuperación
 
@@ -71,13 +71,13 @@ El botón del panel permite volver a poner un rango de fechas en la cola. Las ma
 
 ## Despliegue frontend
 
-Conecta el repositorio a Cloudflare Pages usando:
+Conecta el repositorio a Vercel usando:
 
 - Comando de build: `npm run build`
 - Carpeta de salida: `dist`
-- Variables de build: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`
+- Variables de build: `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-Cloudflare Pages gratuito sirve los archivos estáticos; este frontend no necesita guardar secretos de Google ni ejecutar lógica privilegiada.
+Vercel Hobby sirve los archivos estáticos; este frontend no necesita guardar secretos de Google ni ejecutar lógica privilegiada. Configura esas variables para Production y Preview y vuelve a desplegar.
 
 ## Historial desde noviembre de 2026
 

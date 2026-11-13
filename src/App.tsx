@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { QRCodeSVG } from 'qrcode.react'
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -16,6 +15,8 @@ import {
   EyeOff,
   History as HistoryIcon,
   LogOut,
+  LocateFixed,
+  MapPin,
   RefreshCw,
   ShieldCheck,
   Users,
@@ -29,8 +30,15 @@ import {
   type SyncLog,
 } from './lib/supabase'
 
-type QrSession = { token: string; access_code: string; expires_at: string }
 type Notice = { tone: 'success' | 'error' | 'info'; text: string }
+type LocationSettings = {
+  configured: boolean
+  latitude: number | null
+  longitude: number | null
+  radius_m: number
+  max_accuracy_m: number
+  updated_at: string | null
+}
 
 const PERU_ZONE = 'America/Lima'
 const GOOGLE_SHEETS_URL = 'https://docs.google.com/spreadsheets/d/1qtxU2ZZEraO4h07jq0SD3mXlUhCMcltmuIhxw7sOetE/edit'
@@ -79,7 +87,7 @@ function getErrorDetail(error: unknown) {
     .join(' · ')
   if (detail) {
     if (value.code === 'PGRST202' || value.code === '42883') {
-      return `${detail} Ejecuta en Supabase SQL Editor la migración 202611100002_admin_attendance_correction.sql.`
+      return `${detail} Puede faltar aplicar en Supabase la migración que habilita esta función.`
     }
     return value.code ? `${value.code}: ${detail}` : detail
   }
@@ -142,24 +150,21 @@ function App() {
   const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([])
   const [history, setHistory] = useState<AttendanceRecord[]>([])
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([])
-  const [qrSession, setQrSession] = useState<QrSession | null>(null)
-  const [pendingQrToken, setPendingQrToken] = useState(() => new URLSearchParams(window.location.search).get('qr'))
-  const [pendingAttendanceCode, setPendingAttendanceCode] = useState<string | null>(null)
-  const [attendanceCodeInput, setAttendanceCodeInput] = useState('')
-  const [todayLoadedFor, setTodayLoadedFor] = useState<string | null>(null)
   const [scanDialog, setScanDialog] = useState<'confirm' | 'success' | null>(null)
-  const [scanEvent, setScanEvent] = useState<'Ingreso' | 'Salida'>('Ingreso')
+  const [scanEvent, setScanEvent] = useState<'Entrada' | 'Salida'>('Entrada')
   const [resyncFrom, setResyncFrom] = useState(localDateKey())
   const [resyncTo, setResyncTo] = useState(localDateKey())
-  const [adminSection, setAdminSection] = useState<'attendance' | 'correction' | 'history'>('attendance')
+  const [adminSection, setAdminSection] = useState<'attendance' | 'correction' | 'history' | 'location'>('attendance')
   const [lastMarked, setLastMarked] = useState<AttendanceRecord | null>(null)
   const [clock, setClock] = useState(new Date())
 
   useEffect(() => {
+    // QR marking is retired; remove old QR query parameters without processing them.
     const url = new URL(window.location.href)
-    if (!url.searchParams.has('qr')) return
-    url.searchParams.delete('qr')
-    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    if (url.searchParams.has('qr')) {
+      url.searchParams.delete('qr')
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    }
   }, [])
 
   const loadProfile = useCallback(async (userId: string) => {
@@ -200,7 +205,6 @@ function App() {
       if (recent.error) throw recent.error
       setTodayRecords(todayRecord.data ? [todayRecord.data as AttendanceRecord] : [])
       setHistory((recent.data ?? []) as AttendanceRecord[])
-      setTodayLoadedFor(currentProfile.id)
     }
   }, [])
 
@@ -236,76 +240,56 @@ function App() {
 
   useEffect(() => {
     if (!profile?.is_active) return
-    if (profile.role === 'worker') setTodayLoadedFor(null)
     loadData(profile).catch((error) => setNotice({ tone: 'error', text: error.message }))
   }, [profile, loadData])
 
-  useEffect(() => {
-    if (!supabase || profile?.role !== 'admin') return
-    let alive = true
-    void supabase.rpc('get_current_attendance_session').then(({ data, error }) => {
-      if (!alive) return
-      if (error) {
-        setNotice({ tone: 'error', text: 'No se pudo recuperar el QR y la clave. Revisa que las migraciones de asistencia estén aplicadas.' })
-        return
-      }
-      setQrSession(data as QrSession | null)
-    })
-    return () => { alive = false }
-  }, [profile])
-
-  useEffect(() => {
-    if (!pendingQrToken || !session || profile?.role !== 'worker' || todayLoadedFor !== profile.id || scanDialog) return
+  function openLocationConfirmation() {
+    if (!profile || profile.role !== 'worker') return
     const record = todayRecords.find((item) => item.worker_id === profile.id)
-    setScanEvent(record?.check_in_at ? 'Salida' : 'Ingreso')
+    setScanEvent(record?.check_in_at ? 'Salida' : 'Entrada')
+    setNotice(null)
     setScanDialog('confirm')
-  }, [pendingQrToken, session, profile, todayLoadedFor, todayRecords, scanDialog])
+  }
 
-  async function confirmAttendanceScan() {
-    if (!supabase || (!pendingQrToken && !pendingAttendanceCode) || !profile || profile.role !== 'worker') return
+  async function confirmLocationAttendance() {
+    if (!supabase || !profile || profile.role !== 'worker') return
     setBusy(true)
     setNotice(null)
     try {
-      const { data, error } = pendingQrToken
-        ? await supabase.rpc('record_attendance_scan', { p_qr_token: pendingQrToken })
-        : await supabase.rpc('record_attendance_code', { p_code: pendingAttendanceCode })
+      if (!navigator.geolocation) throw new Error('Este dispositivo no ofrece ubicación en el navegador. Usa un teléfono e inténtalo nuevamente.')
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 20000,
+        })
+      })
+      const { data, error } = await supabase.rpc('record_attendance_with_location', {
+        p_latitude: position.coords.latitude,
+        p_longitude: position.coords.longitude,
+        p_accuracy_m: position.coords.accuracy,
+      })
       if (error) throw error
-      let record = data as AttendanceRecord
-      if (!pendingQrToken) {
-        const result = data as { ok?: boolean; error?: string; record?: AttendanceRecord }
-        if (!result.ok || !result.record) throw new Error(result.error || 'No se pudo validar la clave.')
-        record = result.record
-      }
+      const result = data as { ok?: boolean; error?: string; event?: string; record?: AttendanceRecord }
+      if (!result.ok || !result.record) throw new Error(result.error || 'No se pudo validar tu ubicación.')
+      const record = result.record
+      setScanEvent(result.event === 'check_out' ? 'Salida' : 'Entrada')
       setLastMarked(record)
-      setPendingQrToken(null)
-      setPendingAttendanceCode(null)
-      setAttendanceCodeInput('')
       setScanDialog('success')
       void loadData(profile).catch(() => undefined)
     } catch (error) {
-      const message = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
-        ? error.message
-        : 'No se pudo registrar la marca.'
-      setPendingQrToken(null)
-      setPendingAttendanceCode(null)
+      let message = getErrorDetail(error)
+      if (error && typeof error === 'object' && 'code' in error) {
+        const code = Number((error as GeolocationPositionError).code)
+        if (code === 1) message = 'Permite el acceso a la ubicación para este sitio y vuelve a intentarlo.'
+        if (code === 2) message = 'No se pudo obtener la ubicación. Activa el GPS y el Wi-Fi, espera unos segundos e inténtalo otra vez.'
+        if (code === 3) message = 'La ubicación tardó demasiado. Acércate a una ventana o inténtalo otra vez.'
+      }
       setScanDialog(null)
       setNotice({ tone: 'error', text: message })
     } finally {
       setBusy(false)
     }
-  }
-
-  function submitAttendanceCode() {
-    if (!profile || profile.role !== 'worker') return
-    const code = attendanceCodeInput.trim()
-    if (!/^\d{4}$/.test(code)) {
-      setNotice({ tone: 'error', text: 'Ingresa la clave completa de 4 dígitos.' })
-      return
-    }
-    setNotice(null)
-    setPendingAttendanceCode(code)
-    setScanEvent(todayRecords.find((item) => item.worker_id === profile.id)?.check_in_at ? 'Salida' : 'Ingreso')
-    setScanDialog('confirm')
   }
 
   async function signIn(event: FormEvent) {
@@ -353,21 +337,6 @@ function App() {
     setSyncLogs([])
   }
 
-  async function createQr() {
-    if (!supabase) return
-    setBusy(true)
-    setNotice(null)
-    const { data, error } = await supabase.rpc('create_attendance_qr_session')
-    if (error) setNotice({ tone: 'error', text: error.message })
-    else {
-      const createdSession = data as Partial<QrSession>
-      setQrSession(createdSession as QrSession)
-      setNotice(createdSession.access_code
-        ? { tone: 'success', text: 'QR y clave actualizados. Los anteriores ya no funcionan.' }
-        : { tone: 'error', text: 'Se generó el QR, pero Supabase no devolvió la clave. Ejecuta la migración de clave corta y vuelve a generar.' })
-    }
-    setBusy(false)
-  }
 
   async function resync() {
     if (!supabase) return
@@ -425,7 +394,6 @@ function App() {
           <h2>Bienvenido</h2>
           <p className="muted">Ingresa con el correo y contraseña de tu cuenta.</p>
           {authLinkError && <div className="inline-notice notice-error"><span><X size={17} /></span><span>{authLinkError}</span></div>}
-          {pendingQrToken && <div className="inline-notice notice-info"><ShieldCheck size={17} /> QR leído. Inicia sesión para confirmar tu marca.</div>}
           <form onSubmit={signIn} className="form-stack">
             <label>Correo electrónico<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nombre@dkpartners.com" autoComplete="username" required /></label>
             <label>Contraseña<div className="password-input-wrap"><input type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Tu contraseña" autoComplete="current-password" required /><button className="password-visibility" type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} aria-pressed={showPassword}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
@@ -479,24 +447,25 @@ function App() {
           {isAdmin && <div className="sidebar-group">
             <div className="side-label side-label-admin">ADMINISTRACIÓN</div>
             <button type="button" className={`side-nav-item ${adminSection === 'correction' ? 'active' : ''}`} onClick={() => setAdminSection('correction')} title="Corregir asistencia"><Clock3 size={18} /><span>Corregir asistencia</span></button>
+            <button type="button" className={`side-nav-item ${adminSection === 'location' ? 'active' : ''}`} onClick={() => setAdminSection('location')} title="Ubicación del local"><MapPin size={18} /><span>Ubicación del local</span></button>
           </div>}
         </div>
         <div className="sidebar-bottom"><div className="sidebar-stamp">DK<span>·</span>26</div><span>CONTROL INTERNO</span></div>
       </aside>
       <section className="main-column">
         <header className="topbar">
-          <div className="breadcrumb"><span>{isAdmin ? adminSection === 'history' ? 'Espacio de trabajo' : 'Administración' : 'Espacio de trabajo'}</span><span className="crumb-slash">/</span><strong>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : 'Asistencia'}</strong></div>
+          <div className="breadcrumb"><span>{isAdmin ? adminSection === 'history' ? 'Espacio de trabajo' : 'Administración' : 'Espacio de trabajo'}</span><span className="crumb-slash">/</span><strong>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : isAdmin && adminSection === 'location' ? 'Ubicación del local' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : 'Asistencia'}</strong></div>
           <div className="topbar-user"><div className="avatar">{profile.full_name?.slice(0, 1).toUpperCase() || 'D'}</div><div className="user-copy"><strong>{profile.full_name}</strong><span>{isAdmin ? 'Administrador' : 'Trabajador'}</span></div><button className="text-button password-change-trigger" onClick={() => { setNotice(null); setPasswordChangeOpen(true) }}>Cambiar contraseña</button><button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={signOut}><LogOut size={17} /></button></div>
         </header>
         <div className="page-content">
-          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' ? 'ADMINISTRACIÓN' : adminSection === 'history' ? 'EQUIPO' : 'PANEL DE CONTROL' : adminSection === 'history' ? 'MI REGISTRO DE HORAS' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : adminSection === 'history' ? isAdmin ? 'Consulta las horas y marcas de cada trabajador.' : 'Consulta tus entradas, salidas y horas registradas.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link sheet-link-prominent" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Ver hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
+          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' || adminSection === 'location' ? 'ADMINISTRACIÓN' : adminSection === 'history' ? 'EQUIPO' : 'PANEL DE CONTROL' : adminSection === 'history' ? 'MI REGISTRO DE HORAS' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : isAdmin && adminSection === 'location' ? 'Ubicación del local' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : isAdmin && adminSection === 'location' ? 'Define desde dónde se permiten las marcas del equipo.' : adminSection === 'history' ? isAdmin ? 'Consulta las horas y marcas de cada trabajador.' : 'Consulta tus entradas, salidas y horas registradas.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link sheet-link-prominent" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Ver hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
           {notice && <Notice notice={notice} dismiss={() => setNotice(null)} />}
           {scanDialog && !isAdmin && <AttendanceScanDialog
             mode={scanDialog}
             event={scanEvent}
             busy={busy}
-            onConfirm={confirmAttendanceScan}
-            onCancel={() => { setScanDialog(null); setPendingQrToken(null); setPendingAttendanceCode(null) }}
+            onConfirm={confirmLocationAttendance}
+            onCancel={() => setScanDialog(null)}
             onClose={() => setScanDialog(null)}
           />}
 
@@ -504,18 +473,18 @@ function App() {
             isAdmin ? <AdminTeamHistory workers={history} clock={clock} /> : <WorkerHistoryDashboard workerId={profile.id} clock={clock} />
           ) : isAdmin && adminSection === 'correction' ? (
             <AttendanceCorrectionPanel workers={history} onSaved={() => profile ? loadData(profile) : Promise.resolve()} />
+          ) : isAdmin && adminSection === 'location' ? (
+            <AttendanceLocationSettingsPanel />
           ) : isAdmin ? (
             <AdminDashboard
               records={todayRecords}
               workers={history}
               logs={syncLogs}
-              qrSession={qrSession}
               busy={busy}
               from={resyncFrom}
               to={resyncTo}
               setFrom={setResyncFrom}
               setTo={setResyncTo}
-              onCreateQr={createQr}
               onResync={resync}
               clock={clock}
             />
@@ -524,9 +493,7 @@ function App() {
               record={ownRecord}
               history={history}
               lastMarked={lastMarked}
-              code={attendanceCodeInput}
-              onCodeChange={setAttendanceCodeInput}
-              onSubmitCode={submitAttendanceCode}
+              onMark={openLocationConfirmation}
               busy={busy}
               clock={clock}
               onRefresh={() => loadData(profile).catch((error) => setNotice({ tone: 'error', text: error.message }))}
@@ -648,7 +615,7 @@ function WorkerHistoryDashboard({ workerId, clock }: { workerId: string; clock: 
 
 function AttendanceScanDialog(props: {
   mode: 'confirm' | 'success'
-  event: 'Ingreso' | 'Salida'
+  event: 'Entrada' | 'Salida'
   busy: boolean
   onConfirm: () => void
   onCancel: () => void
@@ -664,10 +631,10 @@ function AttendanceScanDialog(props: {
       <h2 id="scan-modal-title">{mode === 'success' ? '¡Marca registrada!' : `¿Confirmas tu ${event.toLowerCase()}?`}</h2>
       <p>{mode === 'success'
         ? `Tu asistencia de ${event.toLowerCase()} quedó guardada en Supabase. La copia de Google Sheets se sincroniza en segundo plano.`
-        : `Se registrará tu ${event.toLowerCase()} con la hora actual. Confirma solo si estás listo para marcar.`}</p>
+        : `Se validará tu ubicación y, si estás en el área del local, se registrará tu ${event.toLowerCase()} con la hora actual. La ubicación solo se consulta al marcar.`}</p>
       {mode === 'confirm' ? <div className="scan-modal-actions">
         <button className="button button-secondary" onClick={onCancel} disabled={busy}>Cancelar</button>
-        <button className="button button-primary" onClick={onConfirm} disabled={busy}>{busy ? 'Registrando…' : 'Sí, registrar'}</button>
+        <button className="button button-primary" onClick={onConfirm} disabled={busy}>{busy ? 'Validando ubicación…' : 'Validar y marcar'}</button>
       </div> : <button className="button button-primary button-wide" onClick={onClose}>Aceptar</button>}
     </section>
   </div>
@@ -682,15 +649,14 @@ function SetupNotice() {
 }
 
 function AdminDashboard(props: {
-  records: AttendanceRecord[]; workers: AttendanceRecord[]; logs: SyncLog[]; qrSession: QrSession | null; busy: boolean; from: string; to: string;
-  setFrom: (value: string) => void; setTo: (value: string) => void; onCreateQr: () => void; onResync: () => void; clock: Date;
+  records: AttendanceRecord[]; workers: AttendanceRecord[]; logs: SyncLog[]; busy: boolean; from: string; to: string;
+  setFrom: (value: string) => void; setTo: (value: string) => void; onResync: () => void; clock: Date;
 }) {
-  const { records, workers, logs, qrSession, busy, from, to, setFrom, setTo, onCreateQr, onResync, clock } = props
+  const { records, workers, logs, busy, from, to, setFrom, setTo, onResync, clock } = props
   const workersWithRecord = workers.map((worker) => ({ ...worker, ...(records.find((record) => record.worker_id === worker.worker_id) ?? {}) }))
   const present = records.filter((record) => record.check_in_at).length
   const completed = records.filter((record) => record.check_out_at).length
   const pendingSync = logs.filter((log) => log.status === 'pending' || log.status === 'processing' || log.status === 'error').length
-  const qrUrl = qrSession ? `${window.location.origin}/?qr=${encodeURIComponent(qrSession.token)}` : ''
 
   return <>
     <section className="metric-grid">
@@ -708,18 +674,6 @@ function AdminDashboard(props: {
           {workersWithRecord.length === 0 && <tr><td colSpan={5}><div className="table-empty"><Users size={20} /><span>Aún no hay trabajadores activos.</span></div></td></tr>}
         </tbody></table></div>
         <div className="panel-foot"><span><span className="live-dot" /> Actualizado en tiempo real al cargar</span><span>{present} de {workers.length} presentes</span></div>
-      </section>
-
-      <section className="panel qr-panel">
-        <div className="panel-heading"><div><span className="eyebrow">MARCAJE DEL EQUIPO</span><h2>Código QR</h2></div><div className="qr-live"><span className="live-dot" /> ACTIVO</div></div>
-        <p className="panel-description">Muestra este código al equipo para registrar entrada o salida. Renovarlo invalida el anterior.</p>
-        <div className={`qr-frame ${qrSession ? 'qr-ready' : ''}`}>
-          {qrSession ? <QRCodeSVG value={qrUrl} size={148} level="H" includeMargin /> : <div className="qr-placeholder"><div className="qr-corner qr-corner-tl" /><div className="qr-corner qr-corner-tr" /><div className="qr-corner qr-corner-bl" /><div className="qr-grid"><span /><span /><span /><span /><span /><span /><span /><span /><span /></div></div>}
-        </div>
-        <div className="qr-caption">{qrSession ? `Válido hasta ${formatTime(qrSession.expires_at)}` : 'Genera el código para iniciar los marcajes'}</div>
-        {qrSession?.access_code && <div className="attendance-short-code"><span>CLAVE MANUAL</span><strong>{qrSession.access_code}</strong><small>El equipo puede escanear el QR o ingresar esta clave.</small></div>}
-        <button className="button button-primary button-wide" onClick={onCreateQr} disabled={busy}><RefreshCw size={16} className={busy ? 'spin' : ''} /> {qrSession ? 'Renovar QR y clave' : 'Generar QR y clave'}</button>
-        <div className="qr-note"><ShieldCheck size={14} /> QR y clave vencen juntos a las 12 horas</div>
       </section>
 
       <section className="panel sync-panel">
@@ -880,7 +834,119 @@ function Metric({ icon, label, value, note, tone }: { icon: ReactNode; label: st
   return <article className="metric-card"><div className={`metric-icon tone-${tone}`}>{icon}</div><span className="metric-label">{label}</span><strong className="metric-value">{value}</strong><span className="metric-note">{note}</span><ArrowUpRight size={15} className="metric-arrow" /></article>
 }
 
-function WorkerDashboard({ record, history, lastMarked, code, onCodeChange, onSubmitCode, busy, clock, onRefresh }: { record?: AttendanceRecord; history: AttendanceRecord[]; lastMarked: AttendanceRecord | null; code: string; onCodeChange: (value: string) => void; onSubmitCode: () => void; busy: boolean; clock: Date; onRefresh: () => void }) {
+function AttendanceLocationSettingsPanel() {
+  const [settings, setSettings] = useState<LocationSettings | null>(null)
+  const [latitude, setLatitude] = useState('')
+  const [longitude, setLongitude] = useState('')
+  const [radius, setRadius] = useState('150')
+  const [maxAccuracy, setMaxAccuracy] = useState('150')
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<Notice | null>(null)
+
+  const loadSettings = useCallback(async () => {
+    if (!supabase) return
+    const { data, error } = await supabase.rpc('get_attendance_location_settings')
+    if (error) throw error
+    const current = data as LocationSettings
+    setSettings(current)
+    setRadius(String(current.radius_m ?? 150))
+    setMaxAccuracy(String(current.max_accuracy_m ?? 150))
+    setLatitude(current.latitude === null ? '' : String(current.latitude))
+    setLongitude(current.longitude === null ? '' : String(current.longitude))
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        await loadSettings()
+      } catch (error) {
+        if (alive) setMessage({ tone: 'error', text: `No se pudo cargar la configuración. Aplica la migración de ubicación en Supabase. ${getErrorDetail(error)}` })
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, [loadSettings])
+
+  async function captureCurrentLocation() {
+    setBusy(true)
+    setMessage(null)
+    try {
+      if (!navigator.geolocation) throw new Error('Este dispositivo no ofrece ubicación en el navegador. Usa un teléfono.')
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 })
+      })
+      setLatitude(position.coords.latitude.toFixed(7))
+      setLongitude(position.coords.longitude.toFixed(7))
+      setMessage({ tone: 'success', text: `Ubicación capturada con precisión aproximada de ${Math.round(position.coords.accuracy)} m. Confirma que estás en el punto del local y guarda.` })
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? Number((error as GeolocationPositionError).code) : 0
+      const detail = code === 1
+        ? 'Permite el acceso a la ubicación para este sitio e inténtalo otra vez.'
+        : code === 2
+          ? 'No se pudo obtener tu ubicación. Activa el GPS y el Wi-Fi e inténtalo otra vez.'
+          : code === 3
+            ? 'La ubicación tardó demasiado. Acércate a una ventana e inténtalo otra vez.'
+            : getErrorDetail(error)
+      setMessage({ tone: 'error', text: detail })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveLocation(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase) return
+    const lat = Number(latitude)
+    const lng = Number(longitude)
+    const radiusMeters = Number(radius)
+    const accuracyMeters = Number(maxAccuracy)
+    if (![lat, lng, radiusMeters, accuracyMeters].every(Number.isFinite)) {
+      setMessage({ tone: 'error', text: 'Completa coordenadas y límites válidos.' })
+      return
+    }
+    setBusy(true)
+    setMessage(null)
+    try {
+      const { data, error } = await supabase.rpc('set_attendance_location_settings', {
+        p_latitude: lat,
+        p_longitude: lng,
+        p_radius_m: radiusMeters,
+        p_max_accuracy_m: accuracyMeters,
+      })
+      if (error) throw error
+      setSettings(data as LocationSettings)
+      setMessage({ tone: 'success', text: 'Ubicación guardada. Las próximas marcas se validarán con este punto y radio.' })
+    } catch (error) {
+      setMessage({ tone: 'error', text: `No se pudo guardar la ubicación: ${getErrorDetail(error)}` })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <section className="panel location-settings-panel">
+    <div className="panel-heading"><div><span className="eyebrow">VALIDACIÓN DE MARCAS</span><h2>Ubicación del local</h2></div><MapPin size={19} className="muted-icon" /></div>
+    <p className="panel-description">Configura el punto estando físicamente en el local. La ubicación de los trabajadores solo se consulta al intentar marcar.</p>
+    {settings?.configured
+      ? <div className="location-configured"><span className="live-dot" /> Ubicación configurada · radio {settings.radius_m} m · precisión máxima {settings.max_accuracy_m} m</div>
+      : <div className="location-unconfigured"><MapPin size={17} /> Aún no se configuró el punto. Las marcas por ubicación seguirán bloqueadas hasta guardarlo.</div>}
+    <button type="button" className="button button-secondary location-capture-button" onClick={captureCurrentLocation} disabled={busy || loading}><LocateFixed size={16} />{busy ? 'Obteniendo…' : 'Usar mi ubicación actual'}</button>
+    <form className="location-settings-form" onSubmit={saveLocation}>
+      <label>Latitud<input type="number" step="any" min="-90" max="90" value={latitude} onChange={(event) => setLatitude(event.target.value)} placeholder="-12.0000000" required disabled={busy || loading} /></label>
+      <label>Longitud<input type="number" step="any" min="-180" max="180" value={longitude} onChange={(event) => setLongitude(event.target.value)} placeholder="-77.0000000" required disabled={busy || loading} /></label>
+      <label>Radio permitido (m)<input type="number" min="25" max="2000" value={radius} onChange={(event) => setRadius(event.target.value)} required disabled={busy || loading} /></label>
+      <label>Precisión máxima (m)<input type="number" min="10" max="1000" value={maxAccuracy} onChange={(event) => setMaxAccuracy(event.target.value)} required disabled={busy || loading} /></label>
+      <button className="button button-primary location-save-button" type="submit" disabled={busy || loading || !latitude || !longitude}>{busy ? 'Guardando…' : 'Guardar ubicación'}</button>
+    </form>
+    <div className="location-settings-footnote">Punto inicial recomendado: radio 150 m y precisión máxima 150 m. Prueben primero con el celular en la tienda y ajusten si el GPS es inestable.</div>
+    {settings?.updated_at && <div className="location-updated-at">Última actualización: {formatDate(new Date(settings.updated_at), { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' })}</div>}
+    {message && <div className="location-settings-message"><Notice notice={message} /></div>}
+  </section>
+}
+
+function WorkerDashboard({ record, history, lastMarked, onMark, busy, clock, onRefresh }: { record?: AttendanceRecord; history: AttendanceRecord[]; lastMarked: AttendanceRecord | null; onMark: () => void; busy: boolean; clock: Date; onRefresh: () => void }) {
   const hasStarted = Boolean(record?.check_in_at)
   const hasFinished = Boolean(record?.check_out_at)
   return <div className="worker-grid">
@@ -888,12 +954,10 @@ function WorkerDashboard({ record, history, lastMarked, code, onCodeChange, onSu
       <div className="panel-heading"><div><span className="eyebrow">MI JORNADA · {formatDate(clock, { day: '2-digit', month: 'short' }).toUpperCase()}</span><h2>Estado de hoy</h2></div><button className="icon-button icon-button-light" aria-label="Actualizar" onClick={onRefresh}><RefreshCw size={16} /></button></div>
       {lastMarked && <div className="mark-success"><CheckCircle2 size={19} /><div><strong>Marca registrada</strong><span>{lastMarked.check_out_at ? 'Salida' : 'Entrada'} · {formatTime(lastMarked.check_out_at || lastMarked.check_in_at)}</span></div></div>}
       <div className="work-summary"><div className="work-summary-icon"><Clock3 size={20} /></div><div><span>TIEMPO TRABAJADO</span><strong>{workedTime(record)}</strong></div><StatusPill record={record} /></div>
-      <div className="timeline"><div className={`timeline-item ${hasStarted ? 'timeline-complete' : 'timeline-next'}`}><span className="timeline-marker">{hasStarted ? <Check size={13} /> : <ArrowDownToLine size={13} />}</span><div><span>ENTRADA</span><strong>{formatTime(record?.check_in_at)}</strong></div><small>{hasStarted ? 'Registrada' : 'Pendiente'}</small></div><div className="timeline-divider" /><div className={`timeline-item ${hasFinished ? 'timeline-complete' : hasStarted ? 'timeline-next' : ''}`}><span className="timeline-marker">{hasFinished ? <Check size={13} /> : <ArrowUpRight size={13} />}</span><div><span>SALIDA</span><strong>{formatTime(record?.check_out_at)}</strong></div><small>{hasFinished ? 'Registrada' : hasStarted ? 'Al volver a escanear' : 'Pendiente'}</small></div></div>
-      <div className="scan-hint"><ShieldCheck size={16} /><p>Escanea el QR o ingresa la clave de 4 dígitos que muestra tu jefe para registrar {hasStarted ? 'tu salida' : 'tu entrada'}.</p></div>
-      <form className="attendance-code-form" onSubmit={(event) => { event.preventDefault(); onSubmitCode() }}>
-        <label htmlFor="attendance-code">¿No puedes escanear? Escribe la clave</label>
-        <div><input id="attendance-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{4}" maxLength={4} placeholder="0000" value={code} onChange={(event) => onCodeChange(event.target.value.replace(/\D/g, '').slice(0, 4))} disabled={busy || hasFinished} /><button className="button button-secondary" type="submit" disabled={busy || hasFinished || code.length !== 4}>Continuar</button></div>
-      </form>
+      <div className="timeline"><div className={`timeline-item ${hasStarted ? 'timeline-complete' : 'timeline-next'}`}><span className="timeline-marker">{hasStarted ? <Check size={13} /> : <ArrowDownToLine size={13} />}</span><div><span>ENTRADA</span><strong>{formatTime(record?.check_in_at)}</strong></div><small>{hasStarted ? 'Registrada' : 'Pendiente'}</small></div><div className="timeline-divider" /><div className={`timeline-item ${hasFinished ? 'timeline-complete' : hasStarted ? 'timeline-next' : ''}`}><span className="timeline-marker">{hasFinished ? <Check size={13} /> : <ArrowUpRight size={13} />}</span><div><span>SALIDA</span><strong>{formatTime(record?.check_out_at)}</strong></div><small>{hasFinished ? 'Registrada' : hasStarted ? 'Pendiente de salida' : 'Pendiente'}</small></div></div>
+      <div className="scan-hint"><MapPin size={16} /><p>Tu ubicación se validará al marcar. Debes estar dentro del área configurada del local.</p></div>
+      <button className="button button-primary button-wide location-mark-button" onClick={onMark} disabled={busy || hasFinished}><LocateFixed size={17} />{hasFinished ? 'Jornada completa' : `Marcar ${hasStarted ? 'salida' : 'entrada'}`}</button>
+      <div className="location-privacy-note">La app no rastrea tu ubicación continuamente; solo la consulta cuando marcas.</div>
       {busy && <div className="loading-line"><span className="loader loader-small" /> Procesando marca…</div>}
     </section>
     <section className="panel history-panel"><div className="panel-heading"><div><span className="eyebrow">TU REGISTRO</span><h2>Últimos días</h2></div><CalendarDays size={19} className="muted-icon" /></div><div className="history-list">{history.map((item) => <div className="history-item" key={item.id}><div className="history-day"><strong>{formatDate(new Date(`${item.work_date}T12:00:00`), { day: '2-digit' })}</strong><span>{formatDate(new Date(`${item.work_date}T12:00:00`), { month: 'short' }).replace('.', '')}</span></div><div className="history-date"><strong>{formatDate(new Date(`${item.work_date}T12:00:00`), { weekday: 'long' })}</strong><span>{formatTime(item.check_in_at)} — {formatTime(item.check_out_at)}</span></div><div className="history-hours">{workedTime(item)}</div></div>)}{history.length === 0 && <div className="history-empty">Tus marcas aparecerán aquí.</div>}</div><div className="history-foot"><span>Zona horaria</span><strong>Perú · UTC−5</strong></div></section>
