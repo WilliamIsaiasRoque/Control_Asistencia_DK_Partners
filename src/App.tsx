@@ -40,6 +40,7 @@ type LocationSite = {
   radius_m: number
   max_accuracy_m: number
   is_active: boolean
+  is_visible: boolean
   updated_at: string | null
 }
 
@@ -857,7 +858,7 @@ function AttendanceLocationSettingsPanel() {
   const loadLocationData = useCallback(async () => {
     if (!supabase) return
     const [siteResult, workerResult, assignmentResult] = await Promise.all([
-      supabase.from('attendance_location_sites').select('id,code,name,latitude,longitude,radius_m,max_accuracy_m,is_active,updated_at').order('name'),
+      supabase.from('attendance_location_sites').select('id,code,name,latitude,longitude,radius_m,max_accuracy_m,is_active,is_visible,updated_at').eq('is_visible', true).order('name'),
       supabase.from('profiles').select('id,full_name,role,is_active').eq('role', 'worker').eq('is_active', true).order('full_name'),
       supabase.from('attendance_location_site_workers').select('site_id,worker_id'),
     ])
