@@ -31,12 +31,15 @@ import {
 } from './lib/supabase'
 
 type Notice = { tone: 'success' | 'error' | 'info'; text: string }
-type LocationSettings = {
-  configured: boolean
+type LocationSite = {
+  id: string
+  code: string
+  name: string
   latitude: number | null
   longitude: number | null
   radius_m: number
   max_accuracy_m: number
+  is_active: boolean
   updated_at: string | null
 }
 
@@ -835,40 +838,83 @@ function Metric({ icon, label, value, note, tone }: { icon: ReactNode; label: st
 }
 
 function AttendanceLocationSettingsPanel() {
-  const [settings, setSettings] = useState<LocationSettings | null>(null)
+  const [sites, setSites] = useState<LocationSite[]>([])
+  const [workers, setWorkers] = useState<Profile[]>([])
+  const [siteWorkers, setSiteWorkers] = useState<{ site_id: string; worker_id: string }[]>([])
+  const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null)
+  const [creatingSite, setCreatingSite] = useState(false)
+  const [siteName, setSiteName] = useState('')
   const [latitude, setLatitude] = useState('')
   const [longitude, setLongitude] = useState('')
-  const [radius, setRadius] = useState('150')
-  const [maxAccuracy, setMaxAccuracy] = useState('150')
+  const [radius, setRadius] = useState('25')
+  const [maxAccuracy, setMaxAccuracy] = useState('25')
+  const [isActive, setIsActive] = useState(true)
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<Notice | null>(null)
 
-  const loadSettings = useCallback(async () => {
+  const loadLocationData = useCallback(async () => {
     if (!supabase) return
-    const { data, error } = await supabase.rpc('get_attendance_location_settings')
-    if (error) throw error
-    const current = data as LocationSettings
-    setSettings(current)
-    setRadius(String(current.radius_m ?? 150))
-    setMaxAccuracy(String(current.max_accuracy_m ?? 150))
-    setLatitude(current.latitude === null ? '' : String(current.latitude))
-    setLongitude(current.longitude === null ? '' : String(current.longitude))
+    const [siteResult, workerResult, assignmentResult] = await Promise.all([
+      supabase.from('attendance_location_sites').select('id,code,name,latitude,longitude,radius_m,max_accuracy_m,is_active,updated_at').order('name'),
+      supabase.from('profiles').select('id,full_name,role,is_active').eq('role', 'worker').eq('is_active', true).order('full_name'),
+      supabase.from('attendance_location_site_workers').select('site_id,worker_id'),
+    ])
+    if (siteResult.error) throw siteResult.error
+    if (workerResult.error) throw workerResult.error
+    if (assignmentResult.error) throw assignmentResult.error
+    setSites((siteResult.data ?? []) as LocationSite[])
+    setWorkers((workerResult.data ?? []) as Profile[])
+    setSiteWorkers((assignmentResult.data ?? []) as { site_id: string; worker_id: string }[])
   }, [])
 
   useEffect(() => {
     let alive = true
     void (async () => {
       try {
-        await loadSettings()
+        await loadLocationData()
       } catch (error) {
-        if (alive) setMessage({ tone: 'error', text: `No se pudo cargar la configuración. Aplica la migración de ubicación en Supabase. ${getErrorDetail(error)}` })
+        if (alive) setMessage({ tone: 'error', text: `No se pudieron cargar los puntos autorizados. Aplica la migración de ubicaciones múltiples en Supabase. ${getErrorDetail(error)}` })
       } finally {
         if (alive) setLoading(false)
       }
     })()
     return () => { alive = false }
-  }, [loadSettings])
+  }, [loadLocationData])
+
+  useEffect(() => {
+    if (!creatingSite && sites.length && !selectedSiteId) setSelectedSiteId(sites[0].id)
+    const selected = sites.find((site) => site.id === selectedSiteId)
+    if (!creatingSite && selected) {
+      setSiteName(selected.name)
+      setLatitude(selected.latitude === null ? '' : String(selected.latitude))
+      setLongitude(selected.longitude === null ? '' : String(selected.longitude))
+      setRadius(String(selected.radius_m))
+      setMaxAccuracy(String(selected.max_accuracy_m))
+      setIsActive(selected.is_active)
+      setSelectedWorkerIds(siteWorkers.filter((assignment) => assignment.site_id === selected.id).map((assignment) => assignment.worker_id))
+    }
+  }, [sites, siteWorkers, selectedSiteId, creatingSite])
+
+  function chooseSite(site: LocationSite) {
+    setCreatingSite(false)
+    setSelectedSiteId(site.id)
+    setMessage(null)
+  }
+
+  function startNewSite() {
+    setCreatingSite(true)
+    setSelectedSiteId(null)
+    setSiteName('')
+    setLatitude('')
+    setLongitude('')
+    setRadius('25')
+    setMaxAccuracy('25')
+    setIsActive(true)
+    setSelectedWorkerIds([])
+    setMessage(null)
+  }
 
   async function captureCurrentLocation() {
     setBusy(true)
@@ -903,22 +949,28 @@ function AttendanceLocationSettingsPanel() {
     const lng = Number(longitude)
     const radiusMeters = Number(radius)
     const accuracyMeters = Number(maxAccuracy)
-    if (![lat, lng, radiusMeters, accuracyMeters].every(Number.isFinite)) {
-      setMessage({ tone: 'error', text: 'Completa coordenadas y límites válidos.' })
+    if (siteName.trim().length < 3 || !selectedWorkerIds.length || ![lat, lng, radiusMeters, accuracyMeters].every(Number.isFinite)) {
+      setMessage({ tone: 'error', text: 'Completa el nombre, coordenadas, límites y al menos un trabajador autorizado.' })
       return
     }
     setBusy(true)
     setMessage(null)
     try {
-      const { data, error } = await supabase.rpc('set_attendance_location_settings', {
+      const { data, error } = await supabase.rpc('save_attendance_location_site', {
+        p_site_id: selectedSiteId,
+        p_name: siteName.trim(),
         p_latitude: lat,
         p_longitude: lng,
         p_radius_m: radiusMeters,
         p_max_accuracy_m: accuracyMeters,
+        p_is_active: isActive,
+        p_worker_ids: selectedWorkerIds,
       })
       if (error) throw error
-      setSettings(data as LocationSettings)
-      setMessage({ tone: 'success', text: 'Ubicación guardada. Las próximas marcas se validarán con este punto y radio.' })
+      setSelectedSiteId(data as string)
+      setCreatingSite(false)
+      await loadLocationData()
+      setMessage({ tone: 'success', text: 'Punto y trabajadores autorizados guardados correctamente.' })
     } catch (error) {
       setMessage({ tone: 'error', text: `No se pudo guardar la ubicación: ${getErrorDetail(error)}` })
     } finally {
@@ -927,21 +979,33 @@ function AttendanceLocationSettingsPanel() {
   }
 
   return <section className="panel location-settings-panel">
-    <div className="panel-heading"><div><span className="eyebrow">VALIDACIÓN DE MARCAS</span><h2>Ubicación del local</h2></div><MapPin size={19} className="muted-icon" /></div>
-    <p className="panel-description">Configura el punto estando físicamente en el local. La ubicación de los trabajadores solo se consulta al intentar marcar.</p>
-    {settings?.configured
-      ? <div className="location-configured"><span className="live-dot" /> Ubicación configurada · radio {settings.radius_m} m · precisión máxima {settings.max_accuracy_m} m</div>
-      : <div className="location-unconfigured"><MapPin size={17} /> Aún no se configuró el punto. Las marcas por ubicación seguirán bloqueadas hasta guardarlo.</div>}
-    <button type="button" className="button button-secondary location-capture-button" onClick={captureCurrentLocation} disabled={busy || loading}><LocateFixed size={16} />{busy ? 'Obteniendo…' : 'Usar mi ubicación actual'}</button>
-    <form className="location-settings-form" onSubmit={saveLocation}>
-      <label>Latitud<input type="number" step="any" min="-90" max="90" value={latitude} onChange={(event) => setLatitude(event.target.value)} placeholder="-12.0000000" required disabled={busy || loading} /></label>
-      <label>Longitud<input type="number" step="any" min="-180" max="180" value={longitude} onChange={(event) => setLongitude(event.target.value)} placeholder="-77.0000000" required disabled={busy || loading} /></label>
-      <label>Radio permitido (m)<input type="number" min="10" max="2000" value={radius} onChange={(event) => setRadius(event.target.value)} required disabled={busy || loading} /></label>
-      <label>Precisión máxima (m)<input type="number" min="10" max="1000" value={maxAccuracy} onChange={(event) => setMaxAccuracy(event.target.value)} required disabled={busy || loading} /></label>
-      <button className="button button-primary location-save-button" type="submit" disabled={busy || loading || !latitude || !longitude}>{busy ? 'Guardando…' : 'Guardar ubicación'}</button>
-    </form>
-    <div className="location-settings-footnote">Radio recomendado para un control estricto: 10 m. La precisión máxima es otro filtro: con 10 m, el teléfono debe reportar una ubicación muy precisa. Si el GPS falla dentro del local, prueba mejorar la señal antes de ampliar esos límites.</div>
-    {settings?.updated_at && <div className="location-updated-at">Última actualización: {formatDate(new Date(settings.updated_at), { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' })}</div>}
+    <div className="panel-heading"><div><span className="eyebrow">VALIDACIÓN DE MARCAS</span><h2>Puntos autorizados</h2></div><MapPin size={19} className="muted-icon" /></div>
+    <p className="panel-description">Cada trabajador puede marcar si está dentro del radio de cualquiera de sus puntos asignados. La ubicación se consulta solo al marcar.</p>
+    <div className="location-sites-layout">
+      <div className="location-site-list">
+        <div className="location-site-list-heading"><strong>Ubicaciones</strong><button type="button" className="button button-secondary" onClick={startNewSite} disabled={busy || loading}>Agregar punto</button></div>
+        {sites.map((site) => <button type="button" key={site.id} className={`location-site-card ${selectedSiteId === site.id && !creatingSite ? 'location-site-card-active' : ''}`} onClick={() => chooseSite(site)}>
+          <span className={`location-site-status ${site.is_active ? 'location-site-status-active' : ''}`} />
+          <span><strong>{site.name}</strong><small>{site.radius_m} m radio · {site.max_accuracy_m} m precisión · {siteWorkers.filter((row) => row.site_id === site.id).length} trabajadores</small></span>
+        </button>)}
+        {!sites.length && !loading && <div className="adjustment-empty">No hay puntos. Aplica la migración en Supabase.</div>}
+      </div>
+      <div className="location-site-editor">
+        <h3>{creatingSite ? 'Agregar ubicación' : 'Editar ubicación'}</h3>
+        <form className="location-settings-form" onSubmit={saveLocation}>
+          <label className="location-name-field">Nombre del punto<input type="text" value={siteName} onChange={(event) => setSiteName(event.target.value)} placeholder="Ej.: Calle Puno 564" minLength={3} maxLength={100} required disabled={busy || loading} /></label>
+          <button type="button" className="button button-secondary location-capture-button" onClick={captureCurrentLocation} disabled={busy || loading}><LocateFixed size={16} />{busy ? 'Obteniendo…' : 'Capturar ubicación actual'}</button>
+          <label>Latitud<input type="number" step="any" min="-90" max="90" value={latitude} onChange={(event) => setLatitude(event.target.value)} placeholder="-16.3976273" required disabled={busy || loading} /></label>
+          <label>Longitud<input type="number" step="any" min="-180" max="180" value={longitude} onChange={(event) => setLongitude(event.target.value)} placeholder="-71.5207275" required disabled={busy || loading} /></label>
+          <label>Radio permitido (m)<input type="number" min="10" max="2000" value={radius} onChange={(event) => setRadius(event.target.value)} required disabled={busy || loading} /></label>
+          <label>Precisión máxima (m)<input type="number" min="10" max="1000" value={maxAccuracy} onChange={(event) => setMaxAccuracy(event.target.value)} required disabled={busy || loading} /></label>
+          <div className="location-worker-assignments"><strong>Trabajadores autorizados</strong><div className="location-worker-options">{workers.map((worker) => <label key={worker.id}><input type="checkbox" checked={selectedWorkerIds.includes(worker.id)} onChange={(event) => setSelectedWorkerIds((current) => event.target.checked ? [...current, worker.id] : current.filter((id) => id !== worker.id))} disabled={busy || loading} /><span>{worker.full_name}</span></label>)}</div></div>
+          <label className="location-active-toggle"><input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} disabled={busy || loading} /><span>Punto activo para marcar</span></label>
+          <button className="button button-primary location-save-button" type="submit" disabled={busy || loading || !latitude || !longitude || !workers.length}>{busy ? 'Guardando…' : 'Guardar punto y permisos'}</button>
+        </form>
+      </div>
+    </div>
+    <div className="location-settings-footnote">La marca pasa si la distancia estimada está dentro del radio y la precisión GPS es igual o mejor que el límite. Los intentos registran el punto evaluado y la razón del rechazo.</div>
     {message && <div className="location-settings-message"><Notice notice={message} /></div>}
   </section>
 }

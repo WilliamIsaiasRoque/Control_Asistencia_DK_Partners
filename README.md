@@ -14,7 +14,7 @@ Aplicación web para un administrador y tres trabajadores. Supabase guarda los d
 1. Instala Node.js LTS y Git.
 2. Copia `.env.example` como `.env` y pega la URL y la clave pública publishable del proyecto Supabase. Si el panel todavía muestra la clave legacy `anon`, también se acepta como `VITE_SUPABASE_ANON_KEY`.
 3. Desde la carpeta del repo ejecuta `npm install` y luego `npm run dev`.
-4. En Supabase SQL Editor, aplica los archivos de `supabase/migrations/` en orden. Si el proyecto ya está configurado, aplica las migraciones que aún no ejecutaste, en particular `202611100003_allow_checkin_after_empty_correction.sql` y `202611130001_location_based_attendance.sql`.
+4. En Supabase SQL Editor, aplica los archivos de `supabase/migrations/` en orden. Si el proyecto ya está configurado, aplica las migraciones que aún no ejecutaste; para ubicación estricta, diagnóstico y varios puntos, ejecuta en orden `202611130001_location_based_attendance.sql`, `202611130002_strict_location_radius.sql`, `202611130003_log_location_attempts.sql` y `202611130004_multiple_attendance_locations.sql`.
 5. Crea las cuentas desde **Authentication → Users → Add user → Create new user** (no uses **Invite user**, que intenta enviar un correo). Asigna una contraseña temporal y confirma el correo desde el panel. El trigger crea automáticamente el perfil `worker`; cada persona puede cambiar su contraseña después de iniciar sesión desde **Cambiar contraseña**. Si alguien la olvida, el administrador le asigna otra desde Supabase.
 6. Cambia el rol del jefe a `admin` desde el SQL Editor:
 
@@ -57,8 +57,10 @@ El Sheet debe compartirse con los trabajadores como **Lector**. La cuenta de App
 ## Marcación con ubicación
 
 - El trabajador inicia sesión y pulsa **Marcar entrada** o **Marcar salida**. Tras confirmar, el navegador pide permiso de ubicación; Supabase acepta la marca solo si el dispositivo informa precisión suficiente y está dentro del radio permitido.
-- La app solicita ubicación únicamente al marcar. No rastrea al trabajador continuamente. Cada intento aceptado registra coordenadas, precisión y distancia en `attendance_location_events`, con lectura limitada al trabajador y al administrador.
-- Después de aplicar `202611130001_location_based_attendance.sql`, abre la app desplegada como administrador, desde un teléfono físicamente en la tienda, entra en **Administración → Ubicación del local**, pulsa **Usar mi ubicación actual** y luego **Guardar ubicación**. Empieza con radio de 150 m y precisión máxima de 150 m; prueba en los teléfonos del equipo y ajusta el radio si el GPS del local lo necesita.
+- La app solicita ubicación únicamente al marcar. No rastrea al trabajador continuamente. Cada intento aceptado registra coordenadas, precisión y distancia en `attendance_location_events`.
+- Después de aplicar las migraciones de ubicación, abre la app desplegada como administrador desde un teléfono físicamente en la tienda, entra en **Administración → Ubicación del local**, pulsa **Usar mi ubicación actual** y luego **Guardar ubicación**. La migración estricta deja radio y precisión máxima en 10 m.
+- `attendance_location_attempts` registra distancia, precisión, límites vigentes y motivo de aceptación/rechazo. No guarda coordenadas exactas de los intentos; la lectura está restringida al administrador. Los intentos que no llegan al servidor por falta de permiso/GPS no pueden registrarse.
+- Los puntos autorizados y su asignación a trabajadores se administran desde **Administración → Ubicación del local**. La migración de ubicaciones múltiples conserva Av. Unión y agrega Calle Puno 564 (25 m/25 m) para todos los trabajadores activos; las cuentas nuevas también reciben ambos puntos.
 - Permite ubicación para el sitio y activa los servicios de ubicación del teléfono. Geolocation requiere HTTPS; Vercel lo sirve por HTTPS. Conviene configurar el punto y marcar desde teléfonos, porque algunas computadoras no tienen GPS preciso.
 - El administrador puede actualizar el punto desde esa sección. Las correcciones manuales siguen disponibles en **Corregir asistencia** y también se sincronizan con Google Sheets.
 - La migración deshabilita las funciones de marca antiguas por QR y clave corta para que no eviten la validación de ubicación. Los enlaces viejos `?qr=...` se limpian de la barra y no generan una marca.
