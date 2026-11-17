@@ -153,6 +153,7 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([])
   const [history, setHistory] = useState<AttendanceRecord[]>([])
+  const [ownHistory, setOwnHistory] = useState<AttendanceRecord[]>([])
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([])
   const [scanDialog, setScanDialog] = useState<'confirm' | 'success' | null>(null)
   const [scanEvent, setScanEvent] = useState<'Entrada' | 'Salida'>('Entrada')
@@ -182,16 +183,19 @@ function App() {
     if (!supabase) return
     const today = localDateKey()
     if (currentProfile.role === 'admin') {
-      const [records, sync, profiles] = await Promise.all([
+      const [records, sync, profiles, ownRecent] = await Promise.all([
         supabase.from('attendance_records').select('*,worker:profiles!attendance_records_worker_id_fkey(full_name)').eq('work_date', today).order('check_in_at', { ascending: true }),
         supabase.from('sync_log').select('attendance_id,status,error,intentos,updated_at').order('updated_at', { ascending: false }).limit(30),
         supabase.from('profiles').select('id,full_name,role,is_active').eq('role', 'worker').eq('is_active', true).order('full_name'),
+        supabase.from('attendance_records').select('*').eq('worker_id', currentProfile.id).order('work_date', { ascending: false }).limit(7),
       ])
       if (records.error) throw records.error
       if (sync.error) throw sync.error
       if (profiles.error) throw profiles.error
+      if (ownRecent.error) throw ownRecent.error
       setTodayRecords((records.data ?? []) as AttendanceRecord[])
       setSyncLogs((sync.data ?? []) as SyncLog[])
+      setOwnHistory((ownRecent.data ?? []) as AttendanceRecord[])
       setHistory((profiles.data ?? []).map((worker: any) => ({
         id: worker.id,
         worker_id: worker.id,
@@ -209,6 +213,7 @@ function App() {
       if (recent.error) throw recent.error
       setTodayRecords(todayRecord.data ? [todayRecord.data as AttendanceRecord] : [])
       setHistory((recent.data ?? []) as AttendanceRecord[])
+      setOwnHistory((recent.data ?? []) as AttendanceRecord[])
     }
   }, [])
 
@@ -248,7 +253,7 @@ function App() {
   }, [profile, loadData])
 
   function openLocationConfirmation() {
-    if (!profile || profile.role !== 'worker') return
+    if (!profile || !profile.is_active) return
     const record = todayRecords.find((item) => item.worker_id === profile.id)
     setScanEvent(record?.check_in_at ? 'Salida' : 'Entrada')
     setNotice(null)
@@ -256,7 +261,7 @@ function App() {
   }
 
   async function confirmLocationAttendance() {
-    if (!supabase || !profile || profile.role !== 'worker') return
+    if (!supabase || !profile || !profile.is_active) return
     setBusy(true)
     setNotice(null)
     try {
@@ -464,9 +469,10 @@ function App() {
         <div className="page-content">
           <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' || adminSection === 'location' ? 'ADMINISTRACIÓN' : adminSection === 'history' ? 'EQUIPO' : 'PANEL DE CONTROL' : adminSection === 'history' ? 'MI REGISTRO DE HORAS' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : isAdmin && adminSection === 'location' ? 'Ubicación del local' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : isAdmin && adminSection === 'location' ? 'Define desde dónde se permiten las marcas del equipo.' : adminSection === 'history' ? isAdmin ? 'Consulta las horas y marcas de cada trabajador.' : 'Consulta tus entradas, salidas y horas registradas.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link sheet-link-prominent" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Ver hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
           {notice && <Notice notice={notice} dismiss={() => setNotice(null)} />}
-          {scanDialog && !isAdmin && <AttendanceScanDialog
+          {scanDialog && <AttendanceScanDialog
             mode={scanDialog}
             event={scanEvent}
+            isAdmin={isAdmin}
             busy={busy}
             onConfirm={confirmLocationAttendance}
             onCancel={() => setScanDialog(null)}
@@ -474,12 +480,25 @@ function App() {
           />}
 
           {adminSection === 'history' ? (
-            isAdmin ? <AdminTeamHistory workers={history} clock={clock} /> : <WorkerHistoryDashboard workerId={profile.id} clock={clock} />
+            isAdmin ? <AdminTeamHistory workers={history} self={profile} clock={clock} /> : <WorkerHistoryDashboard workerId={profile.id} clock={clock} />
           ) : isAdmin && adminSection === 'correction' ? (
             <AttendanceCorrectionPanel workers={history} onSaved={() => profile ? loadData(profile) : Promise.resolve()} />
           ) : isAdmin && adminSection === 'location' ? (
             <AttendanceLocationSettingsPanel />
           ) : isAdmin ? (
+            <>
+            <section className="admin-self-attendance">
+              <div className="admin-self-attendance-heading"><div><span className="eyebrow">REGISTRO PERSONAL</span><strong>Tu asistencia como jefe</strong></div><span>Se guarda en el sistema y no se envía al Excel.</span></div>
+              <WorkerDashboard
+                record={ownRecord}
+                history={ownHistory}
+                lastMarked={lastMarked}
+                onMark={openLocationConfirmation}
+                busy={busy}
+                clock={clock}
+                onRefresh={() => loadData(profile).catch((error) => setNotice({ tone: 'error', text: error.message }))}
+              />
+            </section>
             <AdminDashboard
               records={todayRecords}
               workers={history}
@@ -492,6 +511,7 @@ function App() {
               onResync={resync}
               clock={clock}
             />
+            </>
           ) : (
             <WorkerDashboard
               record={ownRecord}
@@ -510,20 +530,21 @@ function App() {
   )
 }
 
-function AdminTeamHistory({ workers, clock }: { workers: AttendanceRecord[]; clock: Date }) {
+function AdminTeamHistory({ workers, self, clock }: { workers: AttendanceRecord[]; self: Profile; clock: Date }) {
   const [workerId, setWorkerId] = useState('')
+  const people = [...workers, { id: self.id, worker_id: self.id, work_date: localDateKey(clock), check_in_at: null, check_out_at: null, worker: { full_name: `${self.full_name} (jefe · solo sistema)` } } as AttendanceRecord]
 
   useEffect(() => {
-    if (!workers.some((worker) => worker.worker_id === workerId)) {
-      setWorkerId(workers[0]?.worker_id ?? '')
+    if (!people.some((worker) => worker.worker_id === workerId)) {
+      setWorkerId(people[0]?.worker_id ?? '')
     }
-  }, [workerId, workers])
+  }, [workerId, workers, self, clock])
 
   return <div className="team-history-page">
     <section className="panel team-history-picker">
-      <div className="team-history-picker-copy"><span className="eyebrow">TRABAJADORES ACTIVOS</span><strong>Selecciona a quién consultar</strong></div>
-      <label>Trabajador<select value={workerId} onChange={(event) => setWorkerId(event.target.value)} disabled={workers.length === 0}>
-        {workers.map((worker) => <option key={worker.worker_id} value={worker.worker_id}>{worker.worker?.full_name || 'Trabajador'}</option>)}
+      <div className="team-history-picker-copy"><span className="eyebrow">REGISTROS DEL EQUIPO</span><strong>Selecciona a quién consultar</strong></div>
+      <label>Persona<select value={workerId} onChange={(event) => setWorkerId(event.target.value)}>
+        {people.map((worker) => <option key={worker.worker_id} value={worker.worker_id}>{worker.worker?.full_name || 'Trabajador'}</option>)}
       </select></label>
     </section>
     {workerId ? <WorkerHistoryDashboard key={workerId} workerId={workerId} clock={clock} /> : <section className="panel team-history-empty">No hay trabajadores activos para mostrar.</section>}
@@ -620,12 +641,13 @@ function WorkerHistoryDashboard({ workerId, clock }: { workerId: string; clock: 
 function AttendanceScanDialog(props: {
   mode: 'confirm' | 'success'
   event: 'Entrada' | 'Salida'
+  isAdmin: boolean
   busy: boolean
   onConfirm: () => void
   onCancel: () => void
   onClose: () => void
 }) {
-  const { mode, event, busy, onConfirm, onCancel, onClose } = props
+  const { mode, event, isAdmin, busy, onConfirm, onCancel, onClose } = props
   return <div className="scan-modal-backdrop">
     <section className="scan-modal" role="dialog" aria-modal="true" aria-labelledby="scan-modal-title">
       <div className={`scan-modal-icon ${mode === 'success' ? 'scan-modal-icon-success' : ''}`}>
@@ -634,7 +656,7 @@ function AttendanceScanDialog(props: {
       <span className="eyebrow">CONTROL DE ASISTENCIA</span>
       <h2 id="scan-modal-title">{mode === 'success' ? '¡Marca registrada!' : `¿Confirmas tu ${event.toLowerCase()}?`}</h2>
       <p>{mode === 'success'
-        ? `Tu asistencia de ${event.toLowerCase()} quedó guardada en Supabase. La copia de Google Sheets se sincroniza en segundo plano.`
+        ? isAdmin ? `Tu asistencia de ${event.toLowerCase()} quedó guardada en el sistema. No se envía a Google Sheets.` : `Tu asistencia de ${event.toLowerCase()} quedó guardada en Supabase. La copia de Google Sheets se sincroniza en segundo plano.`
         : `Se validará tu ubicación y, si estás en el área del local, se registrará tu ${event.toLowerCase()} con la hora actual. La ubicación solo se consulta al marcar.`}</p>
       {mode === 'confirm' ? <div className="scan-modal-actions">
         <button className="button button-secondary" onClick={onCancel} disabled={busy}>Cancelar</button>
@@ -658,8 +680,10 @@ function AdminDashboard(props: {
 }) {
   const { records, workers, logs, busy, from, to, setFrom, setTo, onResync, clock } = props
   const workersWithRecord = workers.map((worker) => ({ ...worker, ...(records.find((record) => record.worker_id === worker.worker_id) ?? {}) }))
-  const present = records.filter((record) => record.check_in_at).length
-  const completed = records.filter((record) => record.check_out_at).length
+  const workerIds = new Set(workers.map((worker) => worker.worker_id))
+  const workerRecords = records.filter((record) => workerIds.has(record.worker_id))
+  const present = workerRecords.filter((record) => record.check_in_at).length
+  const completed = workerRecords.filter((record) => record.check_out_at).length
   const pendingSync = logs.filter((log) => log.status === 'pending' || log.status === 'processing' || log.status === 'error').length
 
   return <>
