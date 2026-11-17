@@ -365,7 +365,7 @@ function App() {
   if (session && passwordSetup) return (
     <main className="setup-page">
       <section className="setup-card password-setup-card">
-        <div className="brand-mark">DK</div>
+        <img className="setup-brand-logo" src="/dkpartners-blue.svg" alt="DK Partners" />
         <span className="eyebrow">ACTIVA TU CUENTA</span>
         <h1>Define tu contraseña</h1>
         <p>Elige una contraseña para ingresar al control de asistencia.</p>
@@ -382,7 +382,7 @@ function App() {
   if (!session) return (
     <main className="login-shell">
       <div className="login-visual">
-        <div className="brand"><span className="brand-mark">DK</span><span>DK PARTNERS</span></div>
+        <div className="brand"><img className="brand-logo" src="/dkpartners-white.svg" alt="DK Partners" /></div>
         <div className="login-message">
           <span className="eyebrow">CONTROL DE ASISTENCIA</span>
           <h1>Tu jornada,<br /><em>en orden.</em></h1>
@@ -392,7 +392,7 @@ function App() {
         <div className="visual-orbit orbit-one" /><div className="visual-orbit orbit-two" />
       </div>
       <section className="login-panel">
-        <div className="login-mobile-brand"><span className="brand-mark">DK</span><span>DK PARTNERS</span></div>
+        <div className="login-mobile-brand"><img className="brand-logo" src="/dkpartners-blue.svg" alt="DK Partners" /></div>
         <div className="login-form-wrap">
           <span className="eyebrow">PORTAL DEL EQUIPO</span>
           <h2>Bienvenido</h2>
@@ -419,7 +419,7 @@ function App() {
   if (passwordChangeOpen) return (
     <main className="setup-page">
       <section className="setup-card password-setup-card">
-        <div className="brand-mark">DK</div>
+        <img className="setup-brand-logo" src="/dkpartners-blue.svg" alt="DK Partners" />
         <span className="eyebrow">SEGURIDAD DE LA CUENTA</span>
         <h1>Cambia tu contraseña</h1>
         <p>Actualiza tu clave de acceso. No se enviará ningún correo.</p>
@@ -441,7 +441,7 @@ function App() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand brand-dark"><span className="brand-mark">DK</span><span>DK PARTNERS</span></div>
+        <div className="brand brand-dark"><img className="brand-logo" src="/dkpartners-white.svg" alt="DK Partners" /></div>
         <div className="side-nav-groups">
           <div className="sidebar-group">
             <div className="side-label">ESPACIO DE TRABAJO</div>
@@ -649,7 +649,7 @@ function Notice({ notice, dismiss }: { notice: Notice; dismiss?: () => void }) {
 }
 
 function SetupNotice() {
-  return <main className="setup-page"><div className="setup-card"><div className="brand-mark">DK</div><span className="eyebrow">PRIMERA CONFIGURACIÓN</span><h1>Conecta el proyecto</h1><p>La interfaz ya está lista. Para guardar marcas de forma segura, agrega las credenciales públicas de tu proyecto Supabase en el archivo local <code>.env.local</code>.</p><pre>VITE_SUPABASE_URL=https://…supabase.co<br />VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_…</pre><p className="small-muted">Las credenciales privadas de Google Sheets y Supabase nunca van en este archivo del navegador.</p></div></main>
+  return <main className="setup-page"><div className="setup-card"><img className="setup-brand-logo" src="/dkpartners-blue.svg" alt="DK Partners" /><span className="eyebrow">PRIMERA CONFIGURACIÓN</span><h1>Conecta el proyecto</h1><p>La interfaz ya está lista. Para guardar marcas de forma segura, agrega las credenciales públicas de tu proyecto Supabase en el archivo local <code>.env.local</code>.</p><pre>VITE_SUPABASE_URL=https://…supabase.co<br />VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_…</pre><p className="small-muted">Las credenciales privadas de Google Sheets y Supabase nunca van en este archivo del navegador.</p></div></main>
 }
 
 function AdminDashboard(props: {
