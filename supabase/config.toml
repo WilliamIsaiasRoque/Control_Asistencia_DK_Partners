@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.send-test-notification]
 verify_jwt = false
+
+[functions.send-attendance-reminders]
+verify_jwt = false
