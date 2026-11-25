@@ -80,8 +80,8 @@ async function sendToDevice(projectId: string, accessToken: string, token: strin
         message: {
           token,
           notification: {
-            title: 'Prueba de notificaciones',
-            body: 'El sistema puede enviar avisos a este dispositivo.',
+            title: 'Asistencia pendiente',
+            body: 'Aún no registras tu hora de salida. Recuerda marcarla al terminar tu jornada.',
           },
           android: {
             priority: 'HIGH',
