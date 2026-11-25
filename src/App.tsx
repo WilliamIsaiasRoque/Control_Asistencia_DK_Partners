@@ -279,8 +279,13 @@ function App() {
         p_accuracy_m: position.coords.accuracy,
       })
       if (error) throw error
-      const result = data as { ok?: boolean; error?: string; event?: string; record?: AttendanceRecord }
-      if (!result.ok || !result.record) throw new Error(result.error || 'No se pudo validar tu ubicación.')
+      const result = data as { ok?: boolean; error?: string; reason?: string; event?: string; record?: AttendanceRecord }
+      if (!result.ok || !result.record) {
+        const publicError = result.reason === 'outside_radius' || result.reason === 'low_accuracy_and_outside_radius'
+          ? 'La ubicación detectada está fuera del radio permitido de tus locales autorizados.'
+          : result.error || 'No se pudo validar tu ubicación.'
+        throw new Error(publicError)
+      }
       const record = result.record
       setScanEvent(result.event === 'check_out' ? 'Salida' : 'Entrada')
       setLastMarked(record)
