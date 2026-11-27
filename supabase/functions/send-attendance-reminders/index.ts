@@ -17,6 +17,25 @@ type PushDevice = { id: string; user_id: string; fcm_token: string }
 
 const reminderSlots = new Set(['17:00', '17:20', '17:40', '18:00', '18:20'])
 
+function errorLogFields(error: unknown) {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message.slice(0, 800) }
+  }
+  if (typeof error === 'object' && error !== null) {
+    const value = error as Record<string, unknown>
+    const safeText = (field: string) =>
+      typeof value[field] === 'string' ? (value[field] as string).slice(0, 800) : undefined
+    return {
+      name: 'SupabaseError',
+      code: safeText('code'),
+      message: safeText('message'),
+      details: safeText('details'),
+      hint: safeText('hint'),
+    }
+  }
+  return { name: typeof error, message: String(error).slice(0, 800) }
+}
+
 function encodeBase64Url(value: string | Uint8Array) {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value
   let binary = ''
@@ -152,6 +171,14 @@ Deno.serve(async (request) => {
   }
   const serviceAccountJson = Deno.env.get('FCM_SERVICE_ACCOUNT_JSON')
   if (!serviceUrl || !serviceKey || !serviceAccountJson) {
+    console.error(JSON.stringify({
+      event: 'send-attendance-reminders missing secrets',
+      work_date: workDate,
+      slot: time,
+      service_url_configured: Boolean(serviceUrl),
+      service_key_configured: Boolean(serviceKey),
+      fcm_service_account_configured: Boolean(serviceAccountJson),
+    }))
     return Response.json({ error: 'Falta configurar los secretos de envío.' }, { status: 500, headers: corsHeaders })
   }
 
@@ -159,7 +186,13 @@ Deno.serve(async (request) => {
   try {
     account = JSON.parse(serviceAccountJson) as ServiceAccount
     if (!account.client_email || !account.private_key || !account.project_id) throw new Error()
-  } catch {
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'send-attendance-reminders invalid FCM service account',
+      work_date: workDate,
+      slot: time,
+      error: errorLogFields(error),
+    }))
     return Response.json({ error: 'FCM_SERVICE_ACCOUNT_JSON no es válido.' }, { status: 500, headers: corsHeaders })
   }
 
@@ -167,6 +200,7 @@ Deno.serve(async (request) => {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
+  let stage = 'consultar asistencias pendientes'
   try {
     const { data: attendanceRows, error: attendanceError } = await db
       .from('attendance_records')
@@ -177,9 +211,17 @@ Deno.serve(async (request) => {
     if (attendanceError) throw attendanceError
     const userIds = [...new Set(((attendanceRows ?? []) as AttendanceRow[]).map((row) => row.worker_id))]
     if (!userIds.length) {
+      console.info(JSON.stringify({
+        event: 'send-attendance-reminders no pending attendance',
+        work_date: workDate,
+        slot: time,
+        sent: 0,
+        failed: 0,
+      }))
       return Response.json({ slot: time, eligible_users: 0, sent: 0, failed: 0 }, { headers: corsHeaders })
     }
 
+    stage = 'consultar perfiles activos'
     const { data: profiles, error: profilesError } = await db.from('profiles')
       .select('id')
       .eq('is_active', true)
@@ -187,9 +229,18 @@ Deno.serve(async (request) => {
     if (profilesError) throw profilesError
     const activeUserIds = ((profiles ?? []) as ActiveProfile[]).map((profile) => profile.id)
     if (!activeUserIds.length) {
+      console.info(JSON.stringify({
+        event: 'send-attendance-reminders no active profiles',
+        work_date: workDate,
+        slot: time,
+        attendance_users: userIds.length,
+        sent: 0,
+        failed: 0,
+      }))
       return Response.json({ slot: time, eligible_users: 0, sent: 0, failed: 0 }, { headers: corsHeaders })
     }
 
+    stage = 'consultar dispositivos activos'
     const { data: devices, error: devicesError } = await db.from('push_devices')
       .select('id,user_id,fcm_token')
       .eq('is_active', true)
@@ -197,14 +248,25 @@ Deno.serve(async (request) => {
     if (devicesError) throw devicesError
     const activeDevices = (devices ?? []) as PushDevice[]
     if (!activeDevices.length) {
+      console.info(JSON.stringify({
+        event: 'send-attendance-reminders no active devices',
+        work_date: workDate,
+        slot: time,
+        eligible_users: activeUserIds.length,
+        devices: 0,
+        sent: 0,
+        failed: 0,
+      }))
       return Response.json({ slot: time, eligible_users: activeUserIds.length, sent: 0, failed: 0 }, { headers: corsHeaders })
     }
 
+    stage = 'autenticar con Firebase'
     const accessToken = await createFirebaseAccessToken(account)
     let sent = 0
     let failed = 0
     let skipped = 0
     for (const device of activeDevices) {
+      stage = 'reservar recordatorio'
       const { data: deliveryId, error: claimError } = await db.rpc('claim_attendance_reminder', {
         p_device_id: device.id,
         p_work_date: workDate,
@@ -216,15 +278,18 @@ Deno.serve(async (request) => {
         continue
       }
 
+      stage = 'enviar notificación a Firebase'
       const result = await sendReminder(account.project_id, accessToken, device.fcm_token)
       const now = new Date().toISOString()
       if (result.ok) {
+        stage = 'guardar resultado del envío'
         const { error: updateError } = await db.from('attendance_reminder_deliveries')
           .update({ status: 'sent', sent_at: now, last_error: null, updated_at: now })
           .eq('id', deliveryId)
         if (updateError) throw updateError
         sent += 1
       } else {
+        stage = 'guardar error del envío'
         const { error: updateError } = await db.from('attendance_reminder_deliveries')
           .update({ status: 'failed', last_error: result.errorMessage, updated_at: now })
           .eq('id', deliveryId)
@@ -239,7 +304,7 @@ Deno.serve(async (request) => {
       }
     }
 
-    return Response.json({
+    const summary = {
       work_date: workDate,
       slot: time,
       eligible_users: activeUserIds.length,
@@ -247,9 +312,17 @@ Deno.serve(async (request) => {
       sent,
       failed,
       skipped,
-    }, { headers: corsHeaders })
+    }
+    console.info(JSON.stringify({ event: 'send-attendance-reminders completed', ...summary }))
+    return Response.json(summary, { headers: corsHeaders })
   } catch (error) {
-    console.error('Error en send-attendance-reminders:', error instanceof Error ? error.message : 'error desconocido')
+    console.error(JSON.stringify({
+      event: 'send-attendance-reminders failed',
+      work_date: workDate,
+      slot: time,
+      stage,
+      error: errorLogFields(error),
+    }))
     return Response.json({ error: 'No se pudieron procesar los recordatorios.' }, { status: 500, headers: corsHeaders })
   }
 })
