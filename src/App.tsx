@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ExternalLink,
   Clock3,
+  Calculator,
   Eye,
   EyeOff,
   History as HistoryIcon,
@@ -159,7 +160,7 @@ function App() {
   const [scanEvent, setScanEvent] = useState<'Entrada' | 'Salida'>('Entrada')
   const [resyncFrom, setResyncFrom] = useState(localDateKey())
   const [resyncTo, setResyncTo] = useState(localDateKey())
-  const [adminSection, setAdminSection] = useState<'attendance' | 'correction' | 'history' | 'location'>('attendance')
+  const [adminSection, setAdminSection] = useState<'attendance' | 'correction' | 'history' | 'location' | 'payroll'>('attendance')
   const [lastMarked, setLastMarked] = useState<AttendanceRecord | null>(null)
   const [clock, setClock] = useState(new Date())
 
@@ -457,6 +458,7 @@ function App() {
             <div className="side-label">ESPACIO DE TRABAJO</div>
             <button type="button" className={`side-nav-item ${adminSection === 'attendance' ? 'active' : ''}`} onClick={() => setAdminSection('attendance')} title="Asistencia"><CalendarDays size={18} /><span>Asistencia</span></button>
             <button type="button" className={`side-nav-item ${adminSection === 'history' ? 'active' : ''}`} onClick={() => setAdminSection('history')} title={isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas'}>{isAdmin ? <Users size={18} /> : <HistoryIcon size={18} />}<span>{isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas'}</span></button>
+            {isAdmin && <button type="button" className={`side-nav-item ${adminSection === 'payroll' ? 'active' : ''}`} onClick={() => setAdminSection('payroll')} title="Pago de trabajadores"><Calculator size={18} /><span>Pago de trabajadores</span></button>}
           </div>
           {isAdmin && <div className="sidebar-group">
             <div className="side-label side-label-admin">ADMINISTRACIÓN</div>
@@ -468,11 +470,11 @@ function App() {
       </aside>
       <section className="main-column">
         <header className="topbar">
-          <div className="breadcrumb"><span>{isAdmin ? adminSection === 'history' ? 'Espacio de trabajo' : 'Administración' : 'Espacio de trabajo'}</span><span className="crumb-slash">/</span><strong>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : isAdmin && adminSection === 'location' ? 'Ubicación del local' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : 'Asistencia'}</strong></div>
+          <div className="breadcrumb"><span>{isAdmin ? adminSection === 'history' || adminSection === 'payroll' ? 'Espacio de trabajo' : 'Administración' : 'Espacio de trabajo'}</span><span className="crumb-slash">/</span><strong>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : isAdmin && adminSection === 'location' ? 'Ubicación del local' : isAdmin && adminSection === 'payroll' ? 'Pago de trabajadores' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : 'Asistencia'}</strong></div>
           <div className="topbar-user"><div className="avatar">{profile.full_name?.slice(0, 1).toUpperCase() || 'D'}</div><div className="user-copy"><strong>{profile.full_name}</strong><span>{isAdmin ? 'Administrador' : 'Trabajador'}</span></div><button className="text-button password-change-trigger" onClick={() => { setNotice(null); setPasswordChangeOpen(true) }}>Cambiar contraseña</button><button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={signOut}><LogOut size={17} /></button></div>
         </header>
         <div className="page-content">
-          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' || adminSection === 'location' ? 'ADMINISTRACIÓN' : adminSection === 'history' ? 'EQUIPO' : 'PANEL DE CONTROL' : adminSection === 'history' ? 'MI REGISTRO DE HORAS' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : isAdmin && adminSection === 'location' ? 'Ubicación del local' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : isAdmin && adminSection === 'location' ? 'Define desde dónde se permiten las marcas del equipo.' : adminSection === 'history' ? isAdmin ? 'Consulta las horas y marcas de cada trabajador.' : 'Consulta tus entradas, salidas y horas registradas.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link sheet-link-prominent" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Ver hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
+          <div className="page-heading"><div><span className="eyebrow">{isAdmin ? adminSection === 'correction' || adminSection === 'location' ? 'ADMINISTRACIÓN' : adminSection === 'history' ? 'EQUIPO' : adminSection === 'payroll' ? 'PAGOS DEL EQUIPO' : 'PANEL DE CONTROL' : adminSection === 'history' ? 'MI REGISTRO DE HORAS' : 'MI ASISTENCIA'}</span><h1>{isAdmin && adminSection === 'correction' ? 'Corregir asistencia' : isAdmin && adminSection === 'location' ? 'Ubicación del local' : isAdmin && adminSection === 'payroll' ? 'Pago de trabajadores' : adminSection === 'history' ? isAdmin ? 'Horarios del equipo' : 'Mi Registro de Horas' : `Hola, ${profile.full_name?.split(' ')[0]}`}<span className="heading-period">.</span></h1><p>{isAdmin && adminSection === 'correction' ? 'Ajusta una marca y registra el motivo del cambio.' : isAdmin && adminSection === 'location' ? 'Define desde dónde se permiten las marcas del equipo.' : isAdmin && adminSection === 'payroll' ? 'Calcula el pago según las horas completas registradas en el mes.' : adminSection === 'history' ? isAdmin ? 'Consulta las horas y marcas de cada trabajador.' : 'Consulta tus entradas, salidas y horas registradas.' : displayDate}</p>{(!isAdmin || adminSection === 'attendance') && <a className="sheet-link sheet-link-prominent" href={GOOGLE_SHEETS_URL} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Ver hoja de asistencia</a>}</div><div className="live-clock"><span className="live-dot" /> HORA DE PERÚ <strong>{formatDate(clock, { hour: 'numeric', minute: '2-digit' })}</strong></div></div>
           {notice && <Notice notice={notice} dismiss={() => setNotice(null)} />}
           {scanDialog && <AttendanceScanDialog
             mode={scanDialog}
@@ -484,7 +486,9 @@ function App() {
             onClose={() => setScanDialog(null)}
           />}
 
-          {adminSection === 'history' ? (
+          {isAdmin && adminSection === 'payroll' ? (
+            <AdminPayrollPanel workers={history} />
+          ) : adminSection === 'history' ? (
             isAdmin ? <AdminTeamHistory workers={history} self={profile} clock={clock} /> : <WorkerHistoryDashboard workerId={profile.id} clock={clock} />
           ) : isAdmin && adminSection === 'correction' ? (
             <AttendanceCorrectionPanel workers={history} onSaved={() => profile ? loadData(profile) : Promise.resolve()} />
@@ -553,6 +557,169 @@ function AdminTeamHistory({ workers, self, clock }: { workers: AttendanceRecord[
       </select></label>
     </section>
     {workerId ? <WorkerHistoryDashboard key={workerId} workerId={workerId} clock={clock} /> : <section className="panel team-history-empty">No hay trabajadores activos para mostrar.</section>}
+  </div>
+}
+
+const PEN = new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+function payrollMinutes(record: AttendanceRecord) {
+  if (!record.check_in_at || !record.check_out_at) return 0
+  return Math.max(0, Math.floor((new Date(record.check_out_at).getTime() - new Date(record.check_in_at).getTime()) / 60000))
+}
+
+function weekStartFor(dateKey: string) {
+  const date = new Date(`${dateKey}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7))
+  return date.toISOString().slice(0, 10)
+}
+
+function dateAtPeruNoon(dateKey: string) {
+  return new Date(`${dateKey}T12:00:00-05:00`)
+}
+
+function AdminPayrollPanel({ workers }: { workers: AttendanceRecord[] }) {
+  const [month, setMonth] = useState(() => localDateKey().slice(0, 7))
+  const [workerId, setWorkerId] = useState('')
+  const [records, setRecords] = useState<AttendanceRecord[]>([])
+  const [hourlyRate, setHourlyRate] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [year, monthNumber] = month.split('-').map(Number)
+  const monthLength = new Date(year, monthNumber, 0).getDate()
+  const monthStart = `${month}-01`
+  const monthEnd = `${month}-${String(monthLength).padStart(2, '0')}`
+  const workerKey = workers.map((worker) => worker.worker_id).join(',')
+  const monthDate = dateAtPeruNoon(monthStart)
+  const todayMonth = localDateKey().slice(0, 7)
+
+  useEffect(() => {
+    if (!workers.some((worker) => worker.worker_id === workerId)) {
+      setWorkerId(workers[0]?.worker_id ?? '')
+    }
+  }, [workers, workerId])
+
+  useEffect(() => {
+    let alive = true
+    const client = supabase
+    const ids = workerKey ? workerKey.split(',') : []
+    setLoading(true)
+    setError('')
+    if (!client) {
+      setError('Supabase no está configurado.')
+      setLoading(false)
+      return () => { alive = false }
+    }
+    if (ids.length === 0) {
+      setRecords([])
+      setHourlyRate(null)
+      setLoading(false)
+      return () => { alive = false }
+    }
+    void (async () => {
+      try {
+        const [settingsResult, attendanceResult] = await Promise.all([
+          client.from('attendance_payroll_settings').select('hourly_rate').eq('id', true).single(),
+          client.from('attendance_records').select('id,worker_id,work_date,check_in_at,check_out_at')
+            .in('worker_id', ids).gte('work_date', monthStart).lte('work_date', monthEnd)
+            .order('work_date', { ascending: true }),
+        ])
+        if (!alive) return
+        if (settingsResult.error) {
+          throw new Error(settingsResult.error.code === '42P01'
+            ? 'Falta aplicar en Supabase la migración de configuración de pagos.'
+            : settingsResult.error.message)
+        }
+        if (attendanceResult.error) throw new Error(attendanceResult.error.message)
+        setHourlyRate(Number(settingsResult.data.hourly_rate))
+        setRecords((attendanceResult.data ?? []) as AttendanceRecord[])
+      } catch (loadError) {
+        if (alive) {
+          setError(getErrorDetail(loadError))
+          setRecords([])
+          setHourlyRate(null)
+        }
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, [monthStart, monthEnd, workerKey])
+
+  const selectedRecords = records.filter((record) => record.worker_id === workerId)
+  const openRecords = selectedRecords.filter((record) => record.check_in_at && !record.check_out_at)
+  const checkoutOnlyRecords = selectedRecords.filter((record) => !record.check_in_at && record.check_out_at)
+  const completeRecords = selectedRecords.filter((record) => record.check_in_at && record.check_out_at)
+    .sort((a, b) => a.work_date.localeCompare(b.work_date))
+  const totalMinutes = completeRecords.reduce((sum, record) => sum + payrollMinutes(record), 0)
+  const weekMap = new Map<string, { minutes: number; records: AttendanceRecord[] }>()
+  completeRecords.forEach((record) => {
+    const weekStart = weekStartFor(record.work_date)
+    const week = weekMap.get(weekStart) ?? { minutes: 0, records: [] }
+    week.minutes += payrollMinutes(record)
+    week.records.push(record)
+    weekMap.set(weekStart, week)
+  })
+  const weeks = [...weekMap.entries()].sort(([a], [b]) => a.localeCompare(b))
+  const monthlyPay = weeks.reduce((sum, [, week]) => sum + Math.round(week.minutes * (hourlyRate ?? 0) / 60 * 100), 0) / 100
+  const selectedWorkerName = workers.find((worker) => worker.worker_id === workerId)?.worker?.full_name ?? 'Trabajador'
+
+  return <div className="payroll-page">
+    <section className="panel payroll-controls">
+      <div className="payroll-controls-heading"><span className="eyebrow">CÁLCULO MENSUAL</span><strong>Tarifa configurada: {hourlyRate === null ? '—' : `${PEN.format(hourlyRate)} por hora`}</strong></div>
+      <label>Trabajador<select value={workerId} onChange={(event) => setWorkerId(event.target.value)} disabled={!workers.length}>
+        {workers.map((worker) => <option key={worker.worker_id} value={worker.worker_id}>{worker.worker?.full_name || 'Trabajador'}</option>)}
+      </select></label>
+      <div className="payroll-month-picker"><span>Mes consultado</span><div className="month-controls">
+        <button className="icon-button icon-button-light" type="button" aria-label="Mes anterior" onClick={() => setMonth((current) => changeMonth(current, -1))}><ChevronLeft size={17} /></button>
+        <strong>{formatDate(monthDate, { month: 'long', year: 'numeric' })}</strong>
+        <button className="icon-button icon-button-light" type="button" aria-label="Mes siguiente" disabled={month >= todayMonth} onClick={() => setMonth((current) => changeMonth(current, 1))}><ChevronRight size={17} /></button>
+      </div></div>
+    </section>
+
+    {error && <Notice notice={{ tone: 'error', text: `No se pudo preparar el cálculo: ${error}` }} />}
+    {!loading && !error && workers.length === 0 && <section className="panel payroll-empty">No hay trabajadores activos para calcular.</section>}
+    {loading && <div className="history-loading"><span className="loader loader-small" /> Cargando marcas del mes…</div>}
+
+    {!loading && !error && workerId && openRecords.length > 0 && <section className="payroll-blocker" role="alert">
+      <strong>No se puede calcular el pago de {selectedWorkerName} todavía.</strong>
+      <span>Regulariza la hora de salida de {openRecords.map((record) => formatDate(dateAtPeruNoon(record.work_date), { weekday: 'long', day: 'numeric', month: 'long' })).join(', ')} en “Administración → Corregir asistencia” y vuelve a consultar.</span>
+    </section>}
+
+    {!loading && !error && workerId && openRecords.length === 0 && <>
+      <section className="payroll-summary-grid">
+        <article className="payroll-summary-card payroll-hours"><span>HORAS COMPLETAS DEL MES</span><strong>{formatDuration(totalMinutes)}</strong><small>{completeRecords.length} jornadas completas</small></article>
+        <article className="payroll-summary-card payroll-days"><span>DÍAS PAGABLES</span><strong>{String(completeRecords.length).padStart(2, '0')}</strong><small>Solo entrada y salida registradas</small></article>
+        <article className="payroll-summary-card payroll-total"><span>PAGO ESTIMADO DEL MES</span><strong>{PEN.format(monthlyPay)}</strong><small>Suma de semanas; redondeo a céntimos</small></article>
+      </section>
+
+      {checkoutOnlyRecords.length > 0 && <div className="payroll-info" role="status">No se contaron estas salidas porque falta su entrada: {checkoutOnlyRecords.map((record) => formatDate(dateAtPeruNoon(record.work_date), { day: 'numeric', month: 'short' })).join(', ')}.</div>}
+
+      <section className="panel payroll-weekly-panel">
+        <div className="panel-heading"><div><span className="eyebrow">DESGLOSE SEMANAL</span><h2>Pago por semana</h2></div><Calculator size={19} className="muted-icon" /></div>
+        {weeks.length === 0 ? <div className="payroll-empty-inline">No hay jornadas completas para este mes.</div> : <div className="payroll-week-list">{weeks.map(([weekStart, week]) => {
+          const weekEnd = new Date(`${weekStart}T00:00:00Z`)
+          weekEnd.setUTCDate(weekEnd.getUTCDate() + 6)
+          const weekEndKey = weekEnd.toISOString().slice(0, 10)
+          return <article className="payroll-week-row" key={weekStart}>
+            <div><strong>{formatDate(dateAtPeruNoon(weekStart), { day: 'numeric', month: 'short' })} – {formatDate(dateAtPeruNoon(weekEndKey), { day: 'numeric', month: 'short' })}</strong><small>{week.records.length} jornadas del mes</small></div>
+            <span>{formatDuration(week.minutes)}</span><b>{PEN.format(week.minutes * (hourlyRate ?? 0) / 60)}</b>
+          </article>
+        })}</div>}
+        <div className="payroll-panel-foot">Las semanas se agrupan de lunes a domingo; solo suman los días incluidos en el mes elegido.</div>
+      </section>
+
+      <section className="panel payroll-daily-panel">
+        <div className="panel-heading"><div><span className="eyebrow">DETALLE DIARIO</span><h2>{selectedWorkerName}</h2></div><CalendarDays size={19} className="muted-icon" /></div>
+        <div className="payroll-day-list">
+          {completeRecords.map((record) => <article className="payroll-day-row" key={record.id}>
+            <div className="payroll-day-date"><strong>{formatDate(dateAtPeruNoon(record.work_date), { day: '2-digit' })}</strong><span>{formatDate(dateAtPeruNoon(record.work_date), { weekday: 'short', month: 'short' }).replace('.', '')}</span></div>
+            <div className="payroll-day-times"><span>Entrada <b>{formatTime(record.check_in_at)}</b></span><span>Salida <b>{formatTime(record.check_out_at)}</b></span></div>
+            <div className="payroll-day-result"><span>Horas trabajadas</span><strong>{formatDuration(payrollMinutes(record))}</strong></div>
+          </article>)}
+          {completeRecords.length === 0 && <div className="payroll-empty-inline">No hay jornadas completas registradas en {formatDate(monthDate, { month: 'long' })}.</div>}
+        </div>
+      </section>
+    </>}
   </div>
 }
 
