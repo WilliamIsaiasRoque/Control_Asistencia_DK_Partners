@@ -579,6 +579,7 @@ function AdminTeamHistory({ workers, self, clock }: { workers: AttendanceRecord[
 }
 
 const PEN = new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const PEN_PRECISE = new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 3, maximumFractionDigits: 3 })
 
 function payrollMinutes(record: AttendanceRecord) {
   if (!record.check_in_at || !record.check_out_at) return 0
@@ -678,7 +679,22 @@ function AdminPayrollPanel({ workers }: { workers: AttendanceRecord[] }) {
     weekMap.set(weekStart, week)
   })
   const weeks = [...weekMap.entries()].sort(([a], [b]) => a.localeCompare(b))
-  const monthlyPay = weeks.reduce((sum, [, week]) => sum + Math.round(week.minutes * (hourlyRate ?? 0) / 60 * 100), 0) / 100
+  const rateInMills = Math.round((hourlyRate ?? 0) * 1000)
+  const monthlyPayMills = Math.round(totalMinutes * rateInMills / 60)
+  const weeklyPayouts = weeks.map(([weekStart, week]) => {
+    const exactMills = week.minutes * rateInMills / 60
+    const baseMills = Math.floor(exactMills)
+    return { weekStart, mills: baseMills, fraction: exactMills - baseMills }
+  })
+  let millsToAllocate = monthlyPayMills - weeklyPayouts.reduce((sum, week) => sum + week.mills, 0)
+  const payoutPriority = [...weeklyPayouts].sort((a, b) => b.fraction - a.fraction || a.weekStart.localeCompare(b.weekStart))
+  for (const week of payoutPriority) {
+    if (millsToAllocate <= 0) break
+    week.mills += 1
+    millsToAllocate -= 1
+  }
+  const weeklyPayoutMills = new Map(weeklyPayouts.map((week) => [week.weekStart, week.mills]))
+  const monthlyPay = monthlyPayMills / 1000
   const selectedWorkerName = workers.find((worker) => worker.worker_id === workerId)?.worker?.full_name ?? 'Trabajador'
 
   return <div className="payroll-page">
@@ -707,7 +723,7 @@ function AdminPayrollPanel({ workers }: { workers: AttendanceRecord[] }) {
       <section className="payroll-summary-grid">
         <article className="payroll-summary-card payroll-hours"><span>HORAS COMPLETAS DEL MES</span><strong>{formatDuration(totalMinutes)}</strong><small>{completeRecords.length} jornadas completas</small></article>
         <article className="payroll-summary-card payroll-days"><span>DÍAS PAGABLES</span><strong>{String(completeRecords.length).padStart(2, '0')}</strong><small>Solo entrada y salida registradas</small></article>
-        <article className="payroll-summary-card payroll-total"><span>PAGO ESTIMADO DEL MES</span><strong>{PEN.format(monthlyPay)}</strong><small>Suma de semanas; redondeo a céntimos</small></article>
+        <article className="payroll-summary-card payroll-total"><span>PAGO ESTIMADO DEL MES</span><strong>{PEN_PRECISE.format(monthlyPay)}</strong><small>Minutos totales del mes; redondeo a tres decimales</small></article>
       </section>
 
       {checkoutOnlyRecords.length > 0 && <div className="payroll-info" role="status">No se contaron estas salidas porque falta su entrada: {checkoutOnlyRecords.map((record) => formatDate(dateAtPeruNoon(record.work_date), { day: 'numeric', month: 'short' })).join(', ')}.</div>}
@@ -720,10 +736,10 @@ function AdminPayrollPanel({ workers }: { workers: AttendanceRecord[] }) {
           const weekEndKey = weekEnd.toISOString().slice(0, 10)
           return <article className="payroll-week-row" key={weekStart}>
             <div><strong>{formatDate(dateAtPeruNoon(weekStart), { day: 'numeric', month: 'short' })} – {formatDate(dateAtPeruNoon(weekEndKey), { day: 'numeric', month: 'short' })}</strong><small>{week.records.length} jornadas del mes</small></div>
-            <span>{formatDuration(week.minutes)}</span><b>{PEN.format(week.minutes * (hourlyRate ?? 0) / 60)}</b>
+            <span>{formatDuration(week.minutes)}</span><b>{PEN_PRECISE.format((weeklyPayoutMills.get(weekStart) ?? 0) / 1000)}</b>
           </article>
         })}</div>}
-        <div className="payroll-panel-foot">Las semanas se agrupan de lunes a domingo; solo suman los días incluidos en el mes elegido.</div>
+        <div className="payroll-panel-foot">Las semanas se agrupan de lunes a domingo; solo suman los días incluidos en el mes. El ajuste de milésimos hace que el desglose semanal coincida con el total mensual.</div>
       </section>
 
       <section className="panel payroll-daily-panel">
