@@ -65,6 +65,24 @@ function formatTime(value: string | null | undefined) {
   }).format(new Date(value))
 }
 
+function peruMinuteIndex(value: string | Date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: PERU_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(typeof value === 'string' ? new Date(value) : value)
+  const part = (type: string) => Number(parts.find((item) => item.type === type)?.value ?? 0)
+  return Math.floor(Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute')) / 60000)
+}
+
+function elapsedWholeMinutes(start: string | Date, end: string | Date) {
+  return Math.max(0, peruMinuteIndex(end) - peruMinuteIndex(start))
+}
+
 function timeInputValue(value: string | null | undefined) {
   if (!value) return ''
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -101,16 +119,16 @@ function getErrorDetail(error: unknown) {
 
 function workedTime(record?: AttendanceRecord | null) {
   if (!record?.check_in_at) return '0 h 00 min'
-  const end = record.check_out_at ? new Date(record.check_out_at) : new Date()
-  const minutes = Math.max(0, Math.floor((end.getTime() - new Date(record.check_in_at).getTime()) / 60000))
+  const end = record.check_out_at ?? new Date()
+  const minutes = elapsedWholeMinutes(record.check_in_at, end)
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`
 }
 
 function attendanceMinutes(record: AttendanceRecord, now = new Date()) {
   if (!record.check_in_at) return null
   if (!record.check_out_at && record.work_date !== localDateKey(now)) return null
-  const end = record.check_out_at ? new Date(record.check_out_at) : now
-  return Math.max(0, Math.floor((end.getTime() - new Date(record.check_in_at).getTime()) / 60000))
+  const end = record.check_out_at ?? now
+  return elapsedWholeMinutes(record.check_in_at, end)
 }
 
 function formatDuration(minutes: number) {
@@ -564,7 +582,7 @@ const PEN = new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN',
 
 function payrollMinutes(record: AttendanceRecord) {
   if (!record.check_in_at || !record.check_out_at) return 0
-  return Math.max(0, Math.floor((new Date(record.check_out_at).getTime() - new Date(record.check_in_at).getTime()) / 60000))
+  return elapsedWholeMinutes(record.check_in_at, record.check_out_at)
 }
 
 function weekStartFor(dateKey: string) {
